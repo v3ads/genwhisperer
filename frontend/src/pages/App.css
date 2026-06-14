@@ -31,6 +31,12 @@
 .mini-btn:hover{color:var(--text);border-color:var(--cyan-line);}
 .mini-btn.danger:hover{color:var(--danger);border-color:#f06b6b55;}
 
+.explainer{background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:14px 15px;margin-bottom:16px;}
+.explainer h4{font-size:13.5px;margin:0 0 7px;color:var(--cyan);}
+.explainer p{font-size:13px;color:var(--text-dim);margin:0 0 9px;line-height:1.6;}
+.explainer ol{margin:0;padding-left:18px;color:var(--text-dim);font-size:13px;line-height:1.7;}
+.explainer a{color:var(--cyan);text-decoration:underline;}
+
 @media(min-width:860px){
   .kpis{grid-template-columns:repeat(4,1fr);gap:16px;}
   .two-col{flex-direction:row;}

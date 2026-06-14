@@ -1,16 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { admin, type AdminUser, type AdminStats, type SettingsMap } from "../lib/api";
+import { admin, chat, type AdminUser, type AdminStats, type SettingsMap } from "../lib/api";
+import { CURATED_MODELS, availableCuratedModels, type CuratedModel } from "../lib/models";
 import { Brand } from "../components/Brand";
 import "./App.css";
-
-const MODELS = [
-  "deepseek/deepseek-v4-pro",
-  "anthropic/claude-sonnet-4.6",
-  "openai/gpt-4o",
-  "google/gemini-2.0-flash",
-  "meta-llama/llama-3.3-70b-instruct",
-];
 
 function initials(email: string) {
   return email.slice(0, 2).toUpperCase();
@@ -33,11 +26,20 @@ export default function Admin() {
   const [settings, setSettings] = useState<SettingsMap>({});
   const [banner, setBanner] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [modelOptions, setModelOptions] = useState<CuratedModel[]>(CURATED_MODELS);
 
   function loadAll() {
     admin.users().then((r) => setUsers(r.users)).catch(() => {});
     admin.stats().then(setStats).catch(() => {});
     admin.settings().then((r) => setSettings(r.settings)).catch(() => {});
+    chat.models()
+      .then((r) => {
+        const ids = r.models.map((m) => m.id);
+        setModelOptions(availableCuratedModels(ids));
+      })
+      .catch(() => {
+        setModelOptions(CURATED_MODELS);
+      });
   }
   useEffect(loadAll, []);
 
@@ -97,12 +99,22 @@ export default function Admin() {
             </div>
           </div>
           <div className="panel">
-            <div className="p-head"><h3>Free trial & model</h3></div>
+            <div className="p-head"><h3>Free trial &amp; model</h3></div>
             <div className="field">
               <label>Trial model <span className="hint">(platform key)</span></label>
-              <input className="sel mono" list="amodels" value={settings.default_model ?? ""}
-                onChange={(e) => updateSetting("default_model", e.target.value)} />
-              <datalist id="amodels">{MODELS.map((m) => <option key={m} value={m} />)}</datalist>
+              <select
+                className="sel"
+                value={settings.default_model ?? ""}
+                onChange={(e) => updateSetting("default_model", e.target.value)}
+              >
+                {/* If the currently-saved model is not in the curated list, show it as a fallback option */}
+                {settings.default_model && !modelOptions.some((m) => m.id === settings.default_model) && (
+                  <option value={settings.default_model}>{settings.default_model} (current)</option>
+                )}
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label} — {m.note}</option>
+                ))}
+              </select>
             </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label>Free message cap <span className="hint">(per user)</span></label>

@@ -113,6 +113,7 @@ export const auth = {
 
 export const chat = {
   status: () => request<ChatStatus>("/chat/status"),
+  models: () => request<{ models: { id: string }[] }>("/chat/models"),
 };
 
 /**
