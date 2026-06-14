@@ -1,127 +1,129 @@
-# GenWhisperer — Frontend Architect Handoff
+# GenWhisperer — Claude Session Handoff
 
-**Prepared for:** Claude (Frontend Architect)
+**Prepared for:** Claude (next session)
 **Repository:** [https://github.com/v3ads/genwhisperer](https://github.com/v3ads/genwhisperer)
-**Production domain:** `genwhisperer.com`
-**Date:** June 2025
+**Production URL:** `https://www.genwhisperer.com`
+**Railway URL:** `https://genwhisperer-web-production.up.railway.app`
+**Last updated:** 2026-06-14 — after security bug fixes and full E2E test pass
+**Latest commit:** `abaf5f5` on `main`
 
 ---
 
-## What this document covers
+## Current Status — Read This First
 
-Everything you need to build the GenWhisperer frontend from scratch. The backend API is fully implemented, live on Neon Postgres, and ready to accept requests. This document covers the product purpose, the complete backend architecture, every API endpoint, the authentication flow, security constraints, and deployment topology.
+The application is **fully deployed and all 16 end-to-end tests pass**. Two security bugs were fixed in this session (see §Security Fixes below). The database is clean with one production user. No outstanding blockers.
 
-The full machine-readable API specification (request/response shapes, streaming protocol, TypeScript types) lives in [`API_CONTRACT.md`](./API_CONTRACT.md) in the same repo. Read both documents before writing a line of frontend code.
+| Item | State |
+|---|---|
+| Production health | `{"status":"ok","env":"production"}` ✅ |
+| `www.genwhisperer.com` | Live, TLSv1.3, Let's Encrypt ✅ |
+| `genwhisperer.com` | Cloudflare Page Rule → `www.genwhisperer.com` ✅ |
+| Railway deployment | `SUCCESS` (commit `31989b5`) ✅ |
+| All E2E tests | 16/16 passing ✅ |
+| DB users | 1 — `vipaymanshalaby@gmail.com` (admin) |
+| GetResponse list | `LJpJ3` "GenWhisperer" — 1 contact (admin) |
 
 ---
 
-## Product overview
+## What GenWhisperer Is
 
-GenWhisperer is an AI prompt assistant SaaS product built for users of the **Genesis AI website-builder** inside the **E-Stage platform**. Its core job is to interview a user about what they want to build, then output a single, perfectly-structured Genesis prompt with the correct bracket tags that route to the right Genesis builder.
+GenWhisperer is an AI prompt assistant SaaS for users of the **Genesis AI website-builder** inside the **E-Stage platform**. It interviews users about what they want to build, then outputs a single perfectly-structured Genesis prompt with the correct bracket tags.
 
-### The system prompt (baked into every chat request)
+### Genesis routing tags (baked into server-side system prompt)
 
-The backend prepends this system prompt to every conversation before forwarding to OpenRouter. The frontend does not need to send it — it is injected server-side and never exposed to the user:
+| Tag | Routes to |
+|---|---|
+| `[estage-dedicated:]` | Backend/API creation |
+| `[product list:]` | Product catalog / e-commerce |
+| `[tracking:]` | Pixel / analytics integration |
+| `[section:]` | Specific page section |
+| `[page:]` | Entire page |
+| `[app:]` | App / tool creation |
+| `[blog:]` | Blog / content creation |
 
-> You are GenWhisperer, an expert AI assistant that helps users of the Genesis AI website-builder (inside the E-Stage platform) craft perfectly structured prompts.
->
-> Genesis routes each prompt to a specific builder based on phrasing, verbs, and special bracket tags:
-> - `[estage-dedicated:]` — triggers backend/API creation
-> - `[product list:]` — triggers product catalog/e-commerce pages
-> - `[tracking:]` — triggers pixel/analytics integration
-> - `[section:]` — targets a specific page section
-> - `[page:]` — targets an entire page
-> - `[app:]` — triggers app/tool creation
-> - `[blog:]` — triggers blog/content creation
->
-> Your job is to interview the user about what they want to build, understand their goal completely, then output a single, copy-ready, correctly-tagged Genesis prompt that will produce exactly what they want.
+The system prompt is injected server-side and never exposed to the frontend or user.
 
 ### User journey
 
-1. User lands on `genwhisperer.com` (landing page — not yet built)
-2. User enters their email → receives a magic-link email from `Geny <support@genwhisperer.com>`
-3. User clicks the link → browser is redirected to `/chat` with a session cookie set
-4. User chats with the AI (5 free messages on the platform key)
-5. After 5 messages, user sees an upgrade prompt and enters their own OpenRouter API key
-6. With their own key, usage is unlimited
+1. User lands on `genwhisperer.com` → sees landing page
+2. Enters email → receives magic-link from `Geny <support@genwhisperer.com>`
+3. Clicks link → browser navigates to `/auth/verify?token=...` → frontend redirects to `/api/auth/verify?token=...` (full navigation, not fetch) → backend sets `httpOnly` cookie → 302 to `/chat`
+4. 5 free trial messages on the platform OpenRouter key
+5. After 5 messages → 402 response → user enters their own OpenRouter API key
+6. With own key: unlimited usage on their preferred model
 
 ---
 
-## Backend architecture
-
-### Stack
-
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 22 · TypeScript (ESM) |
-| Framework | Express 4 |
-| Database | Neon (serverless Postgres) · Drizzle ORM |
-| Auth | Magic-link email · JWT session cookies |
-| AI proxy | OpenRouter API (`deepseek/deepseek-v4-pro` default) |
-| Encryption | AES-256-GCM (user API keys at rest) |
-| Email | Brevo transactional API |
-| Marketing | GetResponse subscriber sync |
-
-### Repository structure
+## Repository Structure
 
 ```
 genwhisperer/
 ├── src/
-│   ├── index.ts                  # Express server entry point
+│   ├── index.ts                  # Express server entry point + CORS config
 │   ├── db/
-│   │   ├── schema.ts             # Drizzle ORM schema (all 5 tables)
+│   │   ├── schema.ts             # Drizzle ORM schema (6 tables incl. revoked_sessions)
 │   │   ├── index.ts              # Neon connection + schema re-exports
-│   │   ├── migrate.ts            # Migration runner (npm run db:migrate)
-│   │   └── seed.ts               # Default settings seed (npm run db:seed)
+│   │   ├── migrate.ts            # Migration runner
+│   │   └── seed.ts               # Default settings seed
 │   ├── routes/
-│   │   ├── auth.ts               # Magic-link request, verify, logout, me
-│   │   ├── chat.ts               # OpenRouter proxy, trial cap, streaming
+│   │   ├── auth.ts               # Magic-link request/verify/logout/me + JWT blocklist
+│   │   ├── chat.ts               # OpenRouter proxy (SSE), trial cap, key fallback
 │   │   ├── account.ts            # API key save/remove, model preference
 │   │   └── admin.ts              # User list, stats, settings, suspend/delete
 │   ├── services/
-│   │   ├── brevo.ts              # Transactional email (magic-link + notifications)
-│   │   ├── getresponse.ts        # Subscriber sync to "GenWhisperer" list
+│   │   ├── brevo.ts              # Magic-link email + owner notifications
+│   │   ├── getresponse.ts        # List creation + subscriber sync
 │   │   └── settings.ts           # DB-backed settings with in-memory cache
 │   ├── middleware/
-│   │   └── auth.ts               # requireAuth + requireAdmin middleware
+│   │   └── auth.ts               # requireAuth (incl. blocklist check) + requireAdmin
 │   └── utils/
-│       ├── crypto.ts             # AES-256-GCM encrypt/decrypt + key masking
-│       ├── crypto.test.ts        # 5 unit tests
-│       ├── jwt.ts                # JWT sign/verify (jose, HS256, 365-day)
-│       └── jwt.test.ts           # 3 unit tests
+│       ├── crypto.ts             # AES-256-GCM encrypt/decrypt + maskApiKey
+│       ├── jwt.ts                # JWT sign/verify + jti claim + extractJti()
+│       ├── crypto.test.ts        # 5 Vitest tests
+│       └── jwt.test.ts           # 3 Vitest tests
+├── frontend/                     # Vite + React 19 + TypeScript SPA
+│   ├── src/
+│   │   ├── App.tsx               # Router (BrowserRouter + AuthProvider)
+│   │   ├── lib/
+│   │   │   ├── api.ts            # Typed API client + streamChat SSE helper
+│   │   │   └── auth.tsx          # AuthContext (GET /auth/me, logout)
+│   │   ├── components/
+│   │   │   ├── Brand.tsx         # Logo mark + wordmark
+│   │   │   ├── Guards.tsx        # RequireAuth / RequireAdmin route guards
+│   │   │   └── AssistantContent.tsx  # Tag highlighting + copy card
+│   │   └── pages/
+│   │       ├── Landing.tsx       # Public landing page
+│   │       ├── SignIn.tsx        # Magic-link email form
+│   │       ├── Verify.tsx        # Token redirect (window.location → /api/auth/verify)
+│   │       ├── Chat.tsx          # Core AI chat interface
+│   │       ├── Account.tsx       # API key management + model preference
+│   │       ├── Admin.tsx         # Admin dashboard
+│   │       └── NotFound.tsx      # 404
+│   └── vite.config.ts            # Dev: proxies /api → localhost:3001
 ├── drizzle/
-│   ├── migrations/               # Generated SQL migrations (applied to Neon)
-│   └── meta/                     # Drizzle migration metadata
-├── .github/
-│   └── workflows/
-│       └── deploy.yml            # CI: test → build → env-check
-├── .env.example                  # Template with all required variables
-├── API_CONTRACT.md               # Complete endpoint specification
-├── CLAUDE_HANDOFF.md             # This document
-├── Dockerfile                    # ⚠ Needs update (see note below)
-├── docker-compose.yml
-├── package.json
-├── tsconfig.json
-└── vitest.config.ts
+│   └── migrations/
+│       ├── 0000_hard_miss_america.sql  # Initial schema (applied)
+│       └── 0001_revoked_sessions.sql   # JWT blocklist table (applied 2026-06-14)
+├── Dockerfile                    # Multi-stage: frontend → backend → slim prod
+├── nixpacks.toml                 # Railway build plan (Node 22)
+├── API_CONTRACT.md               # Full REST API contract
+├── DEPLOYMENT_REPORT.md          # Full deployment + test results (authoritative)
+└── CLAUDE_HANDOFF.md             # This document
 ```
-
-> **Note on Dockerfile:** The Dockerfile still contains a `frontend-build` stage from an earlier version. Since the frontend was removed from this repo, that stage will fail. If you plan to containerise the backend, either use the Dockerfile as a reference and strip the frontend stages, or simply run `npm run build && npm start` directly.
 
 ---
 
-## Database schema
-
-The database is live on Neon Postgres. All migrations have been applied. The following tables exist:
+## Database Schema (Neon Postgres — all migrations applied)
 
 ### `users`
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | `serial` PK | Auto-increment |
+| `id` | `serial` PK | |
 | `email` | `varchar(320)` UNIQUE | Normalised to lowercase |
 | `name` | `varchar(255)` | Optional |
-| `role` | `enum('user','admin')` | Default `user`; `ADMIN_EMAIL` is auto-promoted |
-| `suspended` | `boolean` | Default `false`; blocks all AI access when `true` |
+| `role` | `enum('user','admin')` | `ADMIN_EMAIL` auto-promoted on sign-in |
+| `suspended` | `boolean` | Default `false`; blocks all AI access |
 | `created_at` | `timestamptz` | |
 | `updated_at` | `timestamptz` | |
 | `last_signed_in` | `timestamptz` | Updated on every verify |
@@ -133,7 +135,7 @@ The database is live on Neon Postgres. All migrations have been applied. The fol
 | `id` | `serial` PK | |
 | `email` | `varchar(320)` | |
 | `token` | `varchar(128)` UNIQUE | 64-char nanoid |
-| `used` | `boolean` | Default `false`; set to `true` on first use |
+| `used` | `boolean` | Set to `true` on first use |
 | `expires_at` | `timestamptz` | 15 minutes from creation |
 | `created_at` | `timestamptz` | |
 
@@ -143,8 +145,8 @@ The database is live on Neon Postgres. All migrations have been applied. The fol
 |---|---|---|
 | `id` | `serial` PK | |
 | `user_id` | `integer` FK → `users.id` | `ON DELETE CASCADE` |
-| `encrypted_key` | `text` | AES-256-GCM: `iv:authTag:ciphertext` (all hex) |
-| `masked_key` | `varchar(32)` | e.g. `sk-or-v1-****abcd` — safe to display |
+| `encrypted_key` | `text` | AES-256-GCM: `iv:authTag:ciphertext` (hex) |
+| `masked_key` | `varchar(32)` | e.g. `sk-or-v1-****abcd` |
 | `preferred_model` | `varchar(128)` | Default `deepseek/deepseek-v4-pro` |
 | `created_at` | `timestamptz` | |
 | `updated_at` | `timestamptz` | |
@@ -155,8 +157,8 @@ The database is live on Neon Postgres. All migrations have been applied. The fol
 |---|---|---|
 | `id` | `serial` PK | |
 | `user_id` | `integer` FK → `users.id` | `ON DELETE CASCADE` |
-| `model` | `varchar(128)` | OpenRouter model ID used |
-| `key_type` | `enum('trial','own')` | `trial` = platform key; `own` = user's key |
+| `model` | `varchar(128)` | OpenRouter model ID |
+| `key_type` | `enum('trial','own')` | |
 | `prompt_tokens` | `integer` | |
 | `completion_tokens` | `integer` | |
 | `total_tokens` | `integer` | |
@@ -171,81 +173,92 @@ The database is live on Neon Postgres. All migrations have been applied. The fol
 | `value` | `text` | All values stored as strings |
 | `updated_at` | `timestamptz` | |
 
-**Seeded default settings:**
+**Current seeded values:**
 
-| Key | Default value |
+| Key | Value |
 |---|---|
-| `trial_message_cap` | `"5"` |
-| `default_model` | `"deepseek/deepseek-v4-pro"` |
-| `brevo_sender_name` | `"Geny"` |
-| `brevo_sender_email` | `"support@genwhisperer.com"` |
-| `getresponse_list_id` | `""` (auto-resolved on first run) |
+| `trial_message_cap` | `5` |
+| `default_model` | `deepseek/deepseek-v4-pro` |
+| `brevo_sender_name` | `Geny` |
+| `brevo_sender_email` | `support@genwhisperer.com` |
+| `getresponse_list_id` | `""` (auto-resolved at runtime — resolves to `LJpJ3`) |
+
+### `revoked_sessions` *(added 2026-06-14)*
+
+| Column | Type | Notes |
+|---|---|---|
+| `jti` | `varchar(128)` PK | JWT ID claim — unique per token |
+| `expires_at` | `timestamptz` | Matches JWT expiry (365 days from issue) |
+| `revoked_at` | `timestamptz` | Default `NOW()` |
+
+Index: `idx_revoked_sessions_expires_at` on `expires_at` (for cleanup queries).
 
 ---
 
-## Authentication — detailed flow
+## Authentication Flow
 
-This is the most important section for the frontend. Read it carefully.
-
-### Overview
-
-Authentication is fully passwordless. There are no passwords, no OAuth providers, no third-party login widgets. The entire flow is:
-
-1. User submits their email → backend sends a magic-link email via Brevo
-2. User clicks the link → browser navigates to the backend verify endpoint → backend sets an `httpOnly` cookie and redirects to `/chat`
-3. All subsequent API calls include the cookie automatically (with `credentials: "include"`)
-
-### The verify redirect — critical implementation detail
-
-The magic-link email contains a URL pointing to **the frontend**:
+### Magic-link request
 
 ```
-https://genwhisperer.com/auth/verify?token=<64-char-token>
+POST /api/auth/request { "email": "user@example.com" }
+→ nanoid(64) token stored in magic_links (15-min TTL)
+→ Brevo sends: "Sign in to GenWhisperer" with link:
+    https://genwhisperer.com/auth/verify?token=<token>
+→ { "success": true }
 ```
 
-The frontend's `/auth/verify` page **must not** call the API with `fetch`. It must perform a **full browser navigation** to the backend verify endpoint:
+### Magic-link verify — CRITICAL: full browser navigation required
 
-```ts
-// On the /auth/verify page, on mount:
-const token = new URLSearchParams(window.location.search).get("token");
-window.location.href = `https://api.genwhisperer.com/api/auth/verify?token=${token}`;
-// (or /api/auth/verify if same-origin)
+```
+User clicks email link → browser navigates to:
+  https://genwhisperer.com/auth/verify?token=<token>
+
+Frontend /auth/verify page (Verify.tsx):
+  window.location.href = `/api/auth/verify?token=${token}`
+  ↑ MUST be window.location.href, NOT fetch().
+    httpOnly cookies can only be set by a real browser navigation.
+
+Backend GET /api/auth/verify?token=<token>:
+  → Validates token (not used, not expired)
+  → Marks token used = true
+  → Upserts user (creates if new, updates lastSignedIn)
+  → If email === ADMIN_EMAIL → role = 'admin'
+  → Signs JWT: { userId, email, role, jti: nanoid(32) } HS256 365d
+  → Sets cookie: gw_session=<jwt>
+      httpOnly: true, secure: true, sameSite: 'lax'
+      domain: '.genwhisperer.com', maxAge: 365 days
+  → 302 redirect → /chat
 ```
 
-This is required because `httpOnly` cookies can only be set by the browser receiving a `Set-Cookie` response header from a full navigation — not from a `fetch` call. After the backend sets the cookie, it issues a `302` redirect to `https://genwhisperer.com/chat`.
+### Session validation (every protected request)
 
-### Session cookie properties
-
-| Property | Value |
-|---|---|
-| Name | `gw_session` |
-| Algorithm | HS256 JWT |
-| `httpOnly` | `true` — JavaScript cannot read it |
-| `secure` | `true` in production |
-| `sameSite` | `lax` |
-| `domain` | `.genwhisperer.com` in production |
-| `maxAge` | 1 year |
-| Payload | `{ userId, email, role }` |
-
-### Checking auth state
-
-Call `GET /api/auth/me` on page load. If the user is authenticated, it returns:
-
-```json
-{ "user": { "id": 1, "email": "user@example.com", "role": "user", "suspended": false } }
 ```
-
-If not authenticated, it returns `401`. Use this to gate protected routes.
+requireAuth middleware:
+  1. Read req.cookies.gw_session
+  2. verifySession(token) → { userId, email, role, jti }
+  3. Check revoked_sessions WHERE jti = <jti>
+     → If found: 401 "Session has been revoked. Please sign in again."
+  4. Fresh DB lookup: users WHERE id = userId
+  5. Check user.suspended → 403 if true
+  6. Set req.user = { id, email, role, suspended }
+```
 
 ### Logout
 
-`POST /api/auth/logout` — clears the cookie server-side. No request body needed.
+```
+POST /api/auth/logout
+→ Extract jti from cookie JWT
+→ INSERT INTO revoked_sessions (jti, expires_at) ON CONFLICT DO NOTHING
+→ DELETE FROM revoked_sessions WHERE expires_at < NOW()  (cleanup)
+→ Clear gw_session cookie (maxAge: 0)
+→ { "success": true }
+```
+
+After logout, the old JWT is immediately rejected by `requireAuth` even if the cookie is replayed.
 
 ---
 
-## The chat endpoint — streaming
-
-The most complex endpoint. Read this section in full before building the chat UI.
+## Chat / AI Proxy
 
 ### Request
 
@@ -254,32 +267,24 @@ POST /api/chat/message
 Content-Type: application/json
 credentials: include
 
-{
-  "messages": [
-    { "role": "user", "content": "I want to build a product page" }
-  ]
-}
+{ "messages": [{ "role": "user", "content": "..." }] }
 ```
 
-The `messages` array is the full conversation history. The backend is **stateless** — it does not persist conversation history. The frontend must maintain the message array in state and send the entire history on every request.
+The `messages` array is the **full conversation history**. The backend is stateless — it does not persist chat history. The frontend must maintain the array in state and send the entire history on every request.
 
-### Response: SSE stream
-
-On success (`200`), the response is `Content-Type: text/event-stream`. Parse each `data:` line:
+### Response: SSE stream (200)
 
 ```
+Content-Type: text/event-stream
+
 data: {"choices":[{"delta":{"content":"Sure"},"index":0}]}
-
 data: {"choices":[{"delta":{"content":", let me"},"index":0}]}
-
 data: [DONE]
 ```
 
-Extract `choices[0].delta.content` from each chunk and append it to the message being built.
+Extract `choices[0].delta.content` from each chunk and append to the building message.
 
-### Trial exhausted: `402`
-
-When the user has used all their free messages and has no own key, the response is `402` (not a stream — a plain JSON body):
+### Trial exhausted: 402 (plain JSON, not SSE)
 
 ```json
 {
@@ -290,289 +295,248 @@ When the user has used all their free messages and has no own key, the response 
 }
 ```
 
-**Check `response.status` before reading the body.** If `402`, parse JSON and show the upgrade UI. If `200`, begin reading the SSE stream.
+**Always check `response.status` before reading the body.** If `402`, parse JSON and show upgrade UI. If `200`, begin reading the SSE stream.
 
-### Complete fetch example
+### Trial status endpoint
 
-```ts
-const response = await fetch("/api/chat/message", {
-  method: "POST",
-  credentials: "include",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ messages }),
-});
-
-if (response.status === 402) {
-  const data = await response.json();
-  showUpgradePrompt(data.message);
-  return;
-}
-
-if (!response.ok || !response.body) {
-  throw new Error("Chat request failed");
-}
-
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-let assistantMessage = "";
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-
-  const chunk = decoder.decode(value, { stream: true });
-  for (const line of chunk.split("\n")) {
-    if (!line.startsWith("data: ")) continue;
-    const payload = line.slice(6).trim();
-    if (payload === "[DONE]") break;
-    try {
-      const json = JSON.parse(payload);
-      const delta = json.choices?.[0]?.delta?.content;
-      if (delta) {
-        assistantMessage += delta;
-        setStreamingMessage(assistantMessage); // update UI
-      }
-    } catch {
-      // malformed chunk — skip
-    }
+```
+GET /api/chat/status
+→ {
+    "trialMessagesUsed": 3,
+    "trialMessageCap": 5,
+    "trialExhausted": false,
+    "hasOwnKey": false,
+    "maskedKey": null,
+    "preferredModel": "deepseek/deepseek-v4-pro"
   }
-}
 ```
 
 ---
 
-## Trial status and upgrade flow
+## Security Fixes Applied (2026-06-14)
 
-Before rendering the chat UI, call `GET /api/chat/status`:
+### Fix 1 — CORS 500 → proper rejection
 
-```json
-{
-  "trialMessagesUsed": 3,
-  "trialMessageCap": 5,
-  "trialExhausted": false,
-  "hasOwnKey": false,
-  "maskedKey": null,
-  "preferredModel": "deepseek/deepseek-v4-pro"
-}
-```
+**File:** `src/index.ts`
 
-Use this to:
-- Show a trial progress indicator (e.g. "3 of 5 free messages used")
-- Pre-emptively show the upgrade UI when `trialExhausted: true`
-- Show the masked key when `hasOwnKey: true`
+**Before:** `callback(new Error('Not allowed by CORS'))` — triggered Express error handler → HTTP 500
 
-### Saving an API key (upgrade flow)
+**After:** `callback(null, false)` — clean rejection, no `Access-Control-Allow-Origin` header, no error response
 
-```
-POST /api/account/api-key
-{ "apiKey": "sk-or-v1-..." }
-```
+### Fix 2 — Logout JWT invalidation
 
-The backend validates the key against OpenRouter before storing it. On success:
+**Problem:** After logout, old JWT tokens were still accepted by the server. An attacker who captured a cookie could continue using it after the user logged out.
 
-```json
-{ "success": true, "maskedKey": "sk-or-v1-****abcd", "preferredModel": "deepseek/deepseek-v4-pro" }
-```
+**Solution:** `revoked_sessions` blocklist table. On logout, the token's `jti` is inserted. On every authenticated request, `requireAuth` checks the blocklist before proceeding.
 
-On invalid key:
-
-```json
-{ "error": "Invalid OpenRouter API key — validation failed." }
-```
-
-### Removing an API key
-
-```
-DELETE /api/account/api-key
-```
-
-The user reverts to trial mode. If they have already exhausted their trial, they will immediately hit the `402` wall again.
+**Files changed:**
+- `src/db/schema.ts` — `revokedSessions` table
+- `src/utils/jwt.ts` — `jti` claim in payload, `extractJti()`, `SESSION_TTL_SECONDS`
+- `src/middleware/auth.ts` — blocklist check
+- `src/routes/auth.ts` — insert on logout + cleanup
+- `drizzle/migrations/0001_revoked_sessions.sql` — applied to Neon
 
 ---
 
-## Admin dashboard
+## Full E2E Test Results (all passing)
 
-The admin role is assigned automatically to the email address in `ADMIN_EMAIL` (`vipaymanshalaby@gmail.com`) on first sign-in. All `/api/admin/*` endpoints require `role === "admin"` — non-admins receive `403`.
-
-### Available admin endpoints
-
-| Method | Path | Returns |
+| Section | Test | Result |
 |---|---|---|
-| `GET` | `/api/admin/users` | Full user list with trial counts, key status, suspension state |
-| `GET` | `/api/admin/stats` | Aggregate: total users, messages, tokens, daily volume (30 days) |
-| `GET` | `/api/admin/settings` | All system settings as key-value pairs |
-| `PATCH` | `/api/admin/settings` | Update a single setting (e.g. change trial cap) |
-| `PATCH` | `/api/admin/users/:id/suspend` | `{ "suspended": true/false }` |
-| `DELETE` | `/api/admin/users/:id` | Permanently delete user + all their data (cascade) |
-| `GET` | `/api/admin/users/:id/usage` | Last 100 usage records for a specific user |
-
-### Changing the trial cap
-
-```
-PATCH /api/admin/settings
-{ "key": "trial_message_cap", "value": "10" }
-```
-
-The change takes effect immediately — the settings service invalidates its in-memory cache on every write.
-
-### Changing the default model
-
-```
-PATCH /api/admin/settings
-{ "key": "default_model", "value": "openai/gpt-4o" }
-```
+| A | Health check, SPA fallback, cache headers | ✅ |
+| B | Magic-link auth, JWT cookie, single-use enforcement | ✅ |
+| C | Admin auto-promotion by ADMIN_EMAIL | ✅ |
+| D | SSE streaming, trial cap (5 msg), 402 on exhaustion | ✅ |
+| E5 | Model update via PATCH /api/account/model | ✅ |
+| F | Multi-tenant isolation | ✅ |
+| G1 | GetResponse "GenWhisperer" list exists (id=LJpJ3) | ✅ |
+| G2 | Admin user auto-subscribed on first sign-in | ✅ |
+| H1 | Logout returns 200, clears cookie | ✅ |
+| H2 | Logout invalidates JWT server-side (blocklist) | ✅ fixed |
+| I1 | Unauthenticated /api/chat/message → 401 | ✅ |
+| I2 | Unauthenticated /api/account/api-key → 401 | ✅ |
+| I3 | CORS blocked origin → no ACAO header, not 500 | ✅ fixed |
+| I4 | CORS allowed origin → ACAO header present | ✅ |
+| I5 | SQL injection in email → 400 Zod validation | ✅ |
+| I6 | XSS in email → 400 Zod validation | ✅ |
 
 ---
 
-## Email flows
+## API Reference (Quick)
 
-All emails are sent via Brevo from `Geny <support@genwhisperer.com>`.
-
-| Trigger | Recipient | Subject |
-|---|---|---|
-| User requests magic link | The user | "Your GenWhisperer sign-in link" |
-| New user signs up | Admin (`vipaymanshalaby@gmail.com`) | "[GenWhisperer] New sign-up" |
-| User exhausts trial | Admin | "[GenWhisperer] Trial exhausted" |
-
-The magic-link email is a dark-themed HTML email with a white CTA button. It states the 15-minute expiry and single-use behaviour.
-
----
-
-## GetResponse integration
-
-On every new sign-up, the backend adds the user to the **"GenWhisperer"** GetResponse list. On first run, if the list does not exist, it is created automatically. The list ID is cached in `system_settings` after the first run.
-
-The frontend does not interact with GetResponse directly.
-
----
-
-## CORS and cookie configuration
-
-### Allowed origins (production)
-
-- `https://genwhisperer.com`
-- `https://www.genwhisperer.com`
-
-Additional origins can be added via the `ALLOWED_ORIGINS` environment variable (comma-separated) without a code change.
-
-### Development origins (automatically added when `NODE_ENV !== "production"`)
-
-- `http://localhost:3000`
-- `http://localhost:5173`
-- `http://localhost:4321` (Astro default)
-
-### Required on every frontend request
-
-```ts
-fetch(url, { credentials: "include" })
-// or
-axios.create({ withCredentials: true })
-```
-
-Without `credentials: "include"`, the browser will not send the session cookie and every protected endpoint will return `401`.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/request` | Public | Request magic-link email |
+| `GET` | `/api/auth/verify?token=` | Public | Verify token → set cookie → redirect `/chat` |
+| `POST` | `/api/auth/logout` | Public | Revoke JWT + clear cookie |
+| `GET` | `/api/auth/me` | `requireAuth` | `{ user: { id, email, role, suspended } }` |
+| `GET` | `/api/chat/status` | `requireAuth` | Trial status, key presence, model |
+| `POST` | `/api/chat/message` | `requireAuth` | SSE stream to OpenRouter |
+| `GET` | `/api/chat/models` | `requireAuth` | List OpenRouter models |
+| `POST` | `/api/account/api-key` | `requireAuth` | Save/update encrypted API key |
+| `PATCH` | `/api/account/model` | `requireAuth` | Update preferred model |
+| `DELETE` | `/api/account/api-key` | `requireAuth` | Remove API key (revert to trial) |
+| `GET` | `/api/admin/users` | `requireAdmin` | Full user list with usage |
+| `GET` | `/api/admin/stats` | `requireAdmin` | Aggregate stats + 30-day chart |
+| `GET` | `/api/admin/settings` | `requireAdmin` | All system settings |
+| `PATCH` | `/api/admin/settings` | `requireAdmin` | Update a setting by key |
+| `PATCH` | `/api/admin/users/:id/suspend` | `requireAdmin` | Suspend/unsuspend user |
+| `DELETE` | `/api/admin/users/:id` | `requireAdmin` | Delete user (cascades) |
+| `GET` | `/api/admin/users/:id/usage` | `requireAdmin` | Per-user usage log (last 100) |
+| `GET` | `/api/health` | Public | `{"status":"ok","env":"..."}` |
 
 ---
 
-## Deployment topology
+## Infrastructure
 
-Two options are supported. Choose before building the frontend so you configure the right base URL.
+### Railway
 
-### Option A — Same origin (recommended)
+| Item | Value |
+|---|---|
+| Project ID | `34c538d4-4523-465f-8f5e-0112f9ec6a3f` |
+| Service ID | `cf7a9c54-1256-4af1-acca-8a1e214c0140` |
+| Environment ID | `cc1d954a-ab52-4ee7-9208-9e9425203f77` |
+| Service name | `genwhisperer-web` |
+| Auto-deploy | On push to `main` |
+| Builder | Nixpacks (Node 22) |
 
-Frontend and API both served from `genwhisperer.com`. A reverse proxy (nginx, Caddy, Cloudflare Workers) routes `/api/*` to the Node.js process on port 3001. Everything else serves the frontend.
+### DNS / TLS
 
-With this setup, `credentials: "include"` works with `sameSite: lax` and no `domain` attribute needed. The `APP_URL` env var should be `https://genwhisperer.com`.
+| Domain | Status |
+|---|---|
+| `www.genwhisperer.com` | CNAME → `nsabtvu1.up.railway.app`, TLS valid ✅ |
+| `genwhisperer.com` | Cloudflare Page Rule → `https://www.genwhisperer.com` ✅ |
 
-### Option B — Subdomain split
+> **Note:** The root domain `genwhisperer.com` CNAME to Railway (`1iomeb1m.up.railway.app`) is not set in Cloudflare DNS. Instead, a Cloudflare Page Rule redirects `genwhisperer.com/*` to `https://www.genwhisperer.com/$1`. This works but Railway cannot issue a TLS cert for the root domain. If you want Railway to serve the root domain directly, add the CNAME in Cloudflare with **DNS only** (grey cloud, not proxied).
 
-Frontend at `genwhisperer.com`, API at `api.genwhisperer.com`. In this case, update `src/routes/auth.ts` to use `sameSite: "none"` (already commented in the source). Both origins must be HTTPS.
+### Neon Postgres
+
+- Region: US East 2 (Ohio)
+- Connection var: `NEON_DATABASE_URL`
+- ORM: Drizzle ORM (`drizzle-orm/neon-http`)
+- Applied migrations: `0000_hard_miss_america.sql`, `0001_revoked_sessions.sql`
 
 ---
 
-## Environment variables (for reference)
+## Environment Variables
 
-The backend reads these from environment. All are set as GitHub Actions secrets and assembled into `.env` at deploy time — they are never committed to the repo.
+All 13 secrets are stored in Railway's variable store and injected at runtime.
 
-| Variable | Value |
+| Variable | Purpose |
 |---|---|
 | `NEON_DATABASE_URL` | Neon Postgres connection string |
-| `JWT_SECRET` | 64-char hex — JWT signing |
+| `JWT_SECRET` | 64-char hex — JWT signing (HS256) |
 | `ENCRYPTION_SECRET` | 64-char hex — AES-256-GCM key encryption |
-| `OPENROUTER_PLATFORM_KEY` | Platform key for free-trial users |
-| `BREVO_API_KEY` | Brevo transactional email |
+| `OPENROUTER_PLATFORM_KEY` | Platform trial key (`sk-or-v1-272...`) |
+| `BREVO_API_KEY` | Transactional email |
 | `BREVO_SENDER_NAME` | `Geny` |
 | `BREVO_SENDER_EMAIL` | `support@genwhisperer.com` |
-| `GETRESPONSE_API_KEY` | GetResponse subscriber sync |
+| `GETRESPONSE_API_KEY` | Subscriber sync |
 | `ADMIN_EMAIL` | `vipaymanshalaby@gmail.com` |
 | `APP_URL` | `https://genwhisperer.com` |
 | `ALLOWED_ORIGINS` | `https://genwhisperer.com,https://www.genwhisperer.com` |
 | `NODE_ENV` | `production` |
 | `PORT` | `3001` |
 
+> **Security note:** `JWT_SECRET` and `ENCRYPTION_SECRET` are currently set to the same value. For maximum security, generate two independent 32-byte secrets before scaling to real users.
+
 ---
 
-## Running the backend locally
+## CORS Configuration
+
+Allowed origins (production): `https://genwhisperer.com`, `https://www.genwhisperer.com`
+
+Dev origins (auto-added when `NODE_ENV !== "production"`): `localhost:3000`, `localhost:5173`, `localhost:4321`
+
+**Every frontend request must include `credentials: "include"`** or the session cookie will not be sent and all protected endpoints return 401.
+
+Blocked origins receive a clean rejection (no `Access-Control-Allow-Origin` header) — not an error response.
+
+---
+
+## Email Flows
+
+All emails from `Geny <support@genwhisperer.com>` via Brevo.
+
+| Trigger | Recipient | Subject |
+|---|---|---|
+| Magic-link request | The user | "Your GenWhisperer sign-in link" |
+| New sign-up | `vipaymanshalaby@gmail.com` | "[GenWhisperer] New sign-up" |
+| Trial exhausted | `vipaymanshalaby@gmail.com` | "[GenWhisperer] Trial exhausted" |
+
+---
+
+## GetResponse Integration
+
+- List: **"GenWhisperer"** (id: `LJpJ3`)
+- On every new sign-up, `subscribeUser(email)` is called (non-blocking, errors silently ignored)
+- List ID is cached in `system_settings.getresponse_list_id` after first run
+- Single opt-in configured
+- Current contacts: 1 (`vipaymanshalaby@gmail.com`)
+- Note: test email addresses with fake domains (e.g. `@genwhisperer-test.com`) are rejected by GetResponse with 202 but never appear in the list — this is expected behaviour
+
+---
+
+## Running Locally
 
 ```bash
 git clone https://github.com/v3ads/genwhisperer.git
 cd genwhisperer
 npm install
 cp .env.example .env
-# Fill in .env with your credentials
-npm run dev   # starts on http://localhost:3001
-```
+# Fill in .env with credentials from Railway or .env.example
+npm run dev   # backend on http://localhost:3001
 
-Health check: `GET http://localhost:3001/api/health` → `{ "status": "ok" }`
+# In a second terminal:
+cd frontend
+npm install
+npm run dev   # frontend on http://localhost:5173 (proxies /api → :3001)
+```
 
 ---
 
 ## Tests
 
 ```bash
-npm test
+npm test   # runs 8 Vitest unit tests
 ```
-
-8 unit tests pass:
 
 | Suite | Tests |
 |---|---|
-| `crypto.test.ts` | encrypt/decrypt round-trip, wrong key rejection, masked key format, empty string handling, key derivation |
+| `crypto.test.ts` | encrypt/decrypt round-trip, wrong key rejection, masked key format, empty string, key derivation |
 | `jwt.test.ts` | sign/verify round-trip, expired token rejection, tampered token rejection |
 
 ---
 
-## Pages the frontend needs to build
+## What Is Not Yet Built
 
-Based on the product spec, the frontend requires at minimum:
-
-| Route | Purpose |
+| Feature | Notes |
 |---|---|
-| `/` | Landing page — hero, features, CTA to sign in |
-| `/sign-in` | Magic-link email form |
-| `/auth/verify` | Intercept token from URL, redirect to backend verify endpoint |
-| `/chat` | Core AI prompt assistant interface (protected) |
-| `/account` | API key management, model preference (protected) |
-| `/admin` | Admin dashboard (protected, admin role only) |
-| `/404` | Not found |
-
-The backend redirects to `/chat` after successful magic-link verification. If the user is not authenticated and tries to access `/chat`, the frontend should redirect them to `/sign-in`.
+| Stripe payment integration | No billing/subscription system |
+| Conversation persistence | Chat history lives in React state only; refresh loses it |
+| Resend magic-link button | No UI for requesting a new link from the verify page |
+| User self-service name update | `users.name` column exists, no endpoint |
+| Email unsubscribe / GDPR delete | No self-service account deletion |
+| OpenRouter model selector UI | `/api/chat/models` endpoint exists, no frontend dropdown |
+| Usage export | Admin can view per-user usage but cannot export CSV |
 
 ---
 
-## What is not yet built
+## Git History (recent)
 
-The following items are in `todo.md` as future work:
-
-- Resend magic-link option (currently the user must request a new one)
-- Conversation history persistence (currently stateless — history lives only in frontend state)
-- Model selector UI in the chat interface
-- Stripe payment integration
-- Email template customisation via admin dashboard
-- GetResponse webhook handling
+```
+abaf5f5  docs: update DEPLOYMENT_REPORT with bug fixes, test results, and revoked_sessions schema
+31989b5  fix: CORS 500 error + JWT logout invalidation via revoked_sessions blocklist
+67fa46d  fix: apply Gemini Code Assist review fixes
+29c8280  docs: add comprehensive deployment report for Claude
+af7aaf3  fix: Dockerfile — use frontend/ dir and build:server script
+3e832ba  Add GenWhisperer frontend + Railway deploy config
+ba7fad5  docs: add CLAUDE_HANDOFF.md — comprehensive frontend architect briefing
+6f8d19f  ci: add GitHub Actions workflow — test, build, env assembly from secrets
+```
 
 ---
 
-## Key contacts
+## Key Contacts
 
 | Role | Detail |
 |---|---|
@@ -580,3 +544,6 @@ The following items are in `todo.md` as future work:
 | Support email | `support@genwhisperer.com` |
 | Sender name | Geny |
 | GitHub org | `v3ads` |
+| Railway token | Stored in Railway project — ask owner |
+| GetResponse API key | Stored in Railway env vars as `GETRESPONSE_API_KEY` |
+| GitHub PAT | Stored in GitHub Actions secrets as `GH_PAT` |
