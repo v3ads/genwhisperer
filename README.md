@@ -1,42 +1,43 @@
-# GenWhisperer
+# GenWhisperer — Backend API
 
 **AI Prompt Assistant for Genesis / E-Stage users.**
 
-GenWhisperer interviews you about what you want to build, then outputs a single, perfectly-tagged prompt ready to paste into Genesis — no guesswork required.
+This repository contains the **backend API only**. The frontend is built and maintained separately by the frontend architect. See [`API_CONTRACT.md`](./API_CONTRACT.md) for the full endpoint specification.
 
 ---
 
-## Architecture
+## Stack
 
 | Layer | Technology |
 |---|---|
-| Backend | Node.js 22 · TypeScript · Express 4 |
+| Runtime | Node.js 22 · TypeScript |
+| Framework | Express 4 |
 | Database | Neon (serverless Postgres) · Drizzle ORM |
 | Auth | Magic-link email (Brevo) · JWT session cookies |
 | AI proxy | OpenRouter API (`deepseek/deepseek-v4-pro` default) |
 | Encryption | AES-256-GCM (user API keys at rest) |
 | Email | Brevo transactional API |
 | Marketing | GetResponse subscriber sync |
-| Frontend | React 19 · Vite · React Router |
 
 ---
 
 ## Features
 
-1. **Magic-link authentication** — fully passwordless, no passwords stored.
-2. **OpenRouter proxy** — all prompts route through the platform key during trial.
-3. **Free-trial cap** — default 5 messages; adjustable from the admin dashboard.
-4. **Bring-your-own-key** — users can add their own OpenRouter key for unlimited usage.
-5. **AES-256-GCM encryption** — user API keys are encrypted at rest; never stored in plaintext.
+The API provides the following capabilities to the frontend:
+
+1. **Magic-link authentication** — passwordless sign-in via tokenized email links; no passwords stored.
+2. **OpenRouter proxy with SSE streaming** — all prompts route through the platform key during the free trial.
+3. **Free-trial cap enforcement** — default 5 messages; adjustable from the admin dashboard.
+4. **Bring-your-own-key** — users can store their own OpenRouter key for unlimited usage.
+5. **AES-256-GCM encryption** — user API keys are encrypted at rest and never stored in plaintext.
 6. **Usage tracking** — every message logged with model, token counts, key type, and timestamp.
-7. **Admin dashboard** — adjust trial cap, default model, view all users and usage stats, suspend/unsuspend users.
-8. **GetResponse sync** — new sign-ups are automatically added to the "GenWhisperer" list (created on first run if it doesn't exist).
-9. **Owner email notifications** — new sign-up, trial exhausted, and system errors via Brevo.
-10. **Premium dark UI** — responsive React frontend with streaming markdown rendering.
+7. **Admin dashboard API** — adjust trial cap, default model, view all users and stats, suspend/unsuspend users.
+8. **GetResponse sync** — new sign-ups are automatically added to the "GenWhisperer" list (created on first run if missing).
+9. **Owner email notifications** — new sign-up and trial-exhausted events via Brevo.
 
 ---
 
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
@@ -52,7 +53,6 @@ GenWhisperer interviews you about what you want to build, then outputs a single,
 git clone https://github.com/v3ads/genwhisperer.git
 cd genwhisperer
 npm install
-cd client && npm install && cd ..
 ```
 
 ### 2. Configure environment
@@ -62,7 +62,7 @@ cp .env.example .env
 # Edit .env with your credentials
 ```
 
-Required variables:
+Key variables:
 
 | Variable | Description |
 |---|---|
@@ -72,105 +72,76 @@ Required variables:
 | `OPENROUTER_PLATFORM_KEY` | OpenRouter key for free-trial users |
 | `BREVO_API_KEY` | Brevo API key |
 | `BREVO_SENDER_NAME` | From-name for emails (e.g. `Geny`) |
-| `BREVO_SENDER_EMAIL` | From-address (e.g. `support@genwhisperer.com`) |
+| `BREVO_SENDER_EMAIL` | From-address (`support@genwhisperer.com`) |
 | `GETRESPONSE_API_KEY` | GetResponse API key |
-| `ADMIN_EMAIL` | Your email — gets admin role on first sign-in |
-| `APP_URL` | Frontend URL (e.g. `http://localhost:5173`) |
+| `ADMIN_EMAIL` | Your email — auto-promoted to admin on first sign-in |
+| `APP_URL` | Frontend URL (`https://genwhisperer.com`) |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins |
 
 ### 3. Run migrations and seed
 
 ```bash
-npm run db:migrate   # Create all tables
+npm run db:migrate   # Create all tables in Neon
 npm run db:seed      # Insert default system settings
 ```
 
-### 4. Start development servers
+### 4. Start the development server
 
 ```bash
-# Terminal 1 — backend API (port 3001)
-npm run dev
-
-# Terminal 2 — frontend (port 5173)
-cd client && npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).
-
----
-
-## Making yourself admin
-
-Sign in with the email address set in `ADMIN_EMAIL`. The system automatically assigns the `admin` role to that email on first sign-in. The admin dashboard is at `/admin`.
-
----
-
-## Production build
-
-```bash
-# Build frontend
-cd client && npm run build && cd ..
-
-# Build backend
-npm run build
-
-# Start production server (serves frontend + API on port 3001)
-NODE_ENV=production npm start
+npm run dev   # API on http://localhost:3001
 ```
 
 ---
 
-## Docker
+## Production deployment
+
+### Docker (recommended)
 
 ```bash
 docker compose up --build
 ```
 
-The `docker-compose.yml` starts the app on port 3001. Set all environment variables in a `.env` file at the project root before running.
+### Manual
+
+```bash
+npm run build        # Compile TypeScript → dist/
+NODE_ENV=production npm start
+```
+
+The server listens on `PORT` (default `3001`).
 
 ---
 
-## API Contract
+## Making yourself admin
 
-### Auth
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/auth/request` | Public | Request magic-link email |
-| `GET` | `/api/auth/verify?token=` | Public | Verify token, set session cookie |
-| `POST` | `/api/auth/logout` | Public | Clear session cookie |
-| `GET` | `/api/auth/me` | Required | Get current user |
-
-### Chat
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/chat/status` | Required | Trial usage, key status |
-| `POST` | `/api/chat/message` | Required | Send message (SSE streaming) |
-| `GET` | `/api/chat/models` | Required | List available OpenRouter models |
-
-### Account
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/account/api-key` | Required | Save/update OpenRouter key |
-| `PATCH` | `/api/account/model` | Required | Update preferred model |
-| `DELETE` | `/api/account/api-key` | Required | Remove stored key |
-
-### Admin
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/api/admin/users` | Admin | Full user list with usage |
-| `GET` | `/api/admin/stats` | Admin | Aggregate stats + daily volume |
-| `GET` | `/api/admin/settings` | Admin | All system settings |
-| `PATCH` | `/api/admin/settings` | Admin | Update a setting |
-| `PATCH` | `/api/admin/users/:id/suspend` | Admin | Suspend/unsuspend user |
-| `DELETE` | `/api/admin/users/:id` | Admin | Delete user |
-| `GET` | `/api/admin/users/:id/usage` | Admin | Per-user usage log |
+Sign in with the email address set in `ADMIN_EMAIL`. The system automatically assigns the `admin` role to that email on first sign-in. The admin API is at `/api/admin/*`.
 
 ---
 
-## Database Schema
+## Generating secrets
+
+```bash
+# JWT_SECRET (32 bytes)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# ENCRYPTION_SECRET (32 bytes → 64 hex chars)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+---
+
+## Testing
+
+```bash
+npm test          # Run all tests once
+npm run test:watch  # Watch mode
+```
+
+8 unit tests cover the AES-256-GCM encryption utility and JWT session utility.
+
+---
+
+## Database schema
 
 ```
 users              — email, role, suspended, timestamps
@@ -184,11 +155,17 @@ system_settings    — admin-configurable key-value store
 
 ## Security notes
 
-- **API keys at rest** — encrypted with AES-256-GCM; the `ENCRYPTION_SECRET` must be kept secret and never committed.
-- **JWT sessions** — `httpOnly`, `secure`, `sameSite=none` in production; 1-year expiry.
+- **API keys at rest** — encrypted with AES-256-GCM. The `ENCRYPTION_SECRET` must be kept secret and never committed.
+- **JWT sessions** — `httpOnly`, `secure`, `sameSite=lax`, `domain=.genwhisperer.com` in production; 1-year expiry.
 - **Rate limiting** — auth endpoints: 10 req/15 min; chat: 30 req/min.
 - **Input validation** — all endpoints validated with Zod.
 - **Suspended users** — blocked at the middleware level on every request.
+
+---
+
+## API reference
+
+See [`API_CONTRACT.md`](./API_CONTRACT.md) for the complete endpoint specification including request/response shapes, streaming protocol, error codes, and CORS configuration.
 
 ---
 

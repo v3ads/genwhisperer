@@ -5,32 +5,45 @@ import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import authRouter from "./routes/auth.js";
 import chatRouter from "./routes/chat.js";
 import accountRouter from "./routes/account.js";
 import adminRouter from "./routes/admin.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
-const APP_URL = process.env.APP_URL ?? "http://localhost:5173";
+
+// Allowed frontend origins — extend this list as needed
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "https://genwhisperer.com,https://www.genwhisperer.com")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+// In development, also allow localhost
+if (process.env.NODE_ENV !== "production") {
+  ALLOWED_ORIGINS.push("http://localhost:3000", "http://localhost:5173", "http://localhost:4321");
+}
 
 // ─── Security & middleware ────────────────────────────────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: false, // Managed by frontend
+    contentSecurityPolicy: false, // Managed by the frontend (Claude)
     crossOriginEmbedderPolicy: false,
   })
 );
 
 app.use(
   cors({
-    origin: [APP_URL, "http://localhost:5173", "http://localhost:3001"],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (server-to-server, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -64,27 +77,28 @@ app.use("/api/admin", adminRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV ?? "development",
+  });
 });
 
-// ─── Serve frontend in production ─────────────────────────────────────────────
-if (process.env.NODE_ENV === "production") {
-  const clientDist = path.resolve(__dirname, "../../client/dist");
-  app.use(express.static(clientDist));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(clientDist, "index.html"));
-  });
-}
+// ─── 404 for unknown API routes ───────────────────────────────────────────────
+app.use("/api/*", (_req, res) => {
+  res.status(404).json({ error: "API endpoint not found" });
+});
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error("[Server Error]", err);
+  console.error("[Server Error]", err.message);
   res.status(500).json({ error: "Internal server error" });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 GenWhisperer API running on http://localhost:${PORT}`);
-  console.log(`   Environment: ${process.env.NODE_ENV ?? "development"}`);
+  console.log(`   Environment : ${process.env.NODE_ENV ?? "development"}`);
+  console.log(`   CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
 });
 
 export default app;

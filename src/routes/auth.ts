@@ -33,7 +33,7 @@ router.post("/request", async (req, res) => {
 
   await db.insert(magicLinks).values({ email: normalizedEmail, token, expiresAt });
 
-  const appUrl = process.env.APP_URL ?? "http://localhost:5173";
+  const appUrl = process.env.APP_URL ?? "https://genwhisperer.com";
   const link = `${appUrl}/auth/verify?token=${token}`;
 
   try {
@@ -102,16 +102,22 @@ router.get("/verify", async (req, res) => {
   const sessionToken = await signSession({ userId: user.id, email: user.email, role: user.role });
 
   const isProduction = process.env.NODE_ENV === "production";
+  const appUrl = process.env.APP_URL ?? "https://genwhisperer.com";
+
   res.cookie(SESSION_COOKIE, sessionToken, {
     httpOnly: true,
     secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    // In production the API and frontend share the genwhisperer.com domain;
+    // use 'lax' so the cookie is sent on top-level navigations (the verify redirect).
+    // If the API lives on a subdomain (e.g. api.genwhisperer.com), switch to
+    // sameSite: 'none' and add domain: '.genwhisperer.com'
+    sameSite: isProduction ? "lax" : "lax",
+    domain: isProduction ? ".genwhisperer.com" : undefined,
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     path: "/",
   });
 
-  // Redirect to app
-  const appUrl = process.env.APP_URL ?? "http://localhost:5173";
+  // Redirect to frontend after successful verification
   res.redirect(`${appUrl}/chat`);
 });
 

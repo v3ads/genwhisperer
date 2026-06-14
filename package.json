@@ -15,8 +15,7 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "format": "prettier --write .",
-    "client:dev": "cd client && vite",
-    "client:build": "cd client && vite build"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
