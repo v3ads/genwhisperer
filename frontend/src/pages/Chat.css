@@ -1,7 +1,7 @@
-.chat-shell{display:flex;flex-direction:column;height:100dvh;}
-.chat-head{display:flex;align-items:center;gap:12px;padding:13px 18px;border-bottom:1px solid var(--line);background:var(--navy-2);flex-shrink:0;}
-.chat-head .sp{flex:1;}
-.trial-chip{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--text-dim);background:var(--navy-3);border:1px solid var(--line);padding:6px 11px;border-radius:999px;}
+.chat-shell{display:flex;flex-direction:column;height:100dvh;overflow-x:hidden;max-width:100vw;}
+.chat-head{display:flex;align-items:center;gap:8px;padding:13px 14px;border-bottom:1px solid var(--line);background:var(--navy-2);flex-shrink:0;overflow:hidden;}
+.chat-head .sp{flex:1;min-width:0;}
+.trial-chip{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--text-dim);background:var(--navy-3);border:1px solid var(--line);padding:5px 10px;border-radius:999px;white-space:nowrap;flex-shrink:0;}
 .trial-chip .dots{display:flex;gap:3px;}
 .trial-chip .dots i{width:6px;height:6px;border-radius:50%;background:var(--navy-4);}
 .trial-chip .dots i.used{background:var(--grad);}
@@ -62,3 +62,16 @@
 .wall .panel{text-align:center;}
 .wall h2{font-size:20px;margin-bottom:8px;}
 .wall p{color:var(--text-dim);font-size:14px;margin:0 0 18px;}
+
+/* ---- mobile header: compact chip on narrow screens ---- */
+.chip-compact{display:none;}
+.chip-full{display:inline;}
+@media(max-width:420px){
+  .chat-head{gap:6px;padding:11px 10px;}
+  .trial-chip .dots{display:none;}
+  .trial-chip{font-size:11px;padding:4px 8px;}
+  .chip-full{display:none;}
+  .chip-compact{display:inline;}
+  .icon-btn{width:32px;height:32px;}
+  .icon-btn svg{width:15px;height:15px;}
+}

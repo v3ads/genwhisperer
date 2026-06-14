@@ -2,8 +2,11 @@ import { useState, type ReactNode } from "react";
 
 const TAG_RE = /\[(estage-dedicated|product list|tracking|section|page|app|blog)[^\]]*\]/gi;
 
-/** Split a message into paragraphs; highlight any Genesis tags inline. */
-function renderInline(text: string) {
+// Regex to detect a Genesis tag ANYWHERE in a line (not only at the start)
+const TAG_ANYWHERE_RE = /\[(estage-dedicated|product list|tracking|section|page|app|blog)\b/i;
+
+/** Split text into React nodes, highlighting any Genesis tags inline. */
+function renderInline(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
@@ -16,6 +19,40 @@ function renderInline(text: string) {
   }
   if (last < text.length) nodes.push(text.slice(last));
   return nodes;
+}
+
+/**
+ * Minimal safe markdown renderer for prose paragraphs.
+ * Handles:
+ *   - Lines that are only "---" or "---..." → rendered as <hr>
+ *   - **bold** → <strong> (splits on ** delimiters, no dangerouslySetInnerHTML)
+ * Preserves existing Genesis-tag highlighting via renderInline.
+ */
+function renderParagraph(text: string, key: number): ReactNode {
+  // Strip leading/trailing horizontal rule lines
+  const trimmed = text.trim();
+  if (/^-{3,}$/.test(trimmed)) {
+    return <hr key={key} style={{ border: "none", borderTop: "1px solid var(--line)", margin: "6px 0" }} />;
+  }
+
+  // Split on **...** to produce bold segments
+  const parts = trimmed.split(/\*\*([^*]+)\*\*/g);
+  if (parts.length === 1) {
+    // No bold — use existing inline tag renderer
+    return <p key={key}>{renderInline(trimmed)}</p>;
+  }
+
+  const nodes: ReactNode[] = [];
+  parts.forEach((part, i) => {
+    if (i % 2 === 0) {
+      // Plain text segment — still highlight Genesis tags
+      if (part) nodes.push(...renderInline(part));
+    } else {
+      // Bold segment — highlight Genesis tags inside bold too
+      nodes.push(<strong key={i}>{renderInline(part)}</strong>);
+    }
+  });
+  return <p key={key}>{nodes}</p>;
 }
 
 function CopyBlock({ text }: { text: string }) {
@@ -41,35 +78,38 @@ function CopyBlock({ text }: { text: string }) {
 }
 
 /**
- * A "prompt" is a line/block that begins with a Genesis bracket tag. We pull the
- * first such block out into a copy card, render the rest as prose.
+ * Prompt detection — in priority order:
+ * 1. If a fenced code block (``` ... ```) exists, treat its contents as the prompt.
+ * 2. Else, if any line CONTAINS a Genesis bracket tag anywhere in the line, treat
+ *    the first such line as the prompt (catches mid-sentence tags like "...as an [app:]...").
+ * 3. Else render as plain prose with minimal markdown support.
  */
 export function AssistantContent({ text }: { text: string }) {
-  // find a fenced code block first (``` ... ```), common for the deliverable
   const fence = text.match(/```[a-z]*\n?([\s\S]*?)```/i);
   let promptText: string | null = null;
   let rest = text;
 
-  if (fence && TAG_RE.test(fence[1])) {
+  if (fence) {
+    // Priority 1: fenced code block — use its contents regardless of whether a tag is present
+    // (the backend is now instructed to always fence the prompt)
     promptText = fence[1].trim();
     rest = (text.slice(0, fence.index) + text.slice(fence.index! + fence[0].length)).trim();
   } else {
-    // otherwise: a paragraph that starts with a tag
+    // Priority 2: any line that CONTAINS a Genesis tag anywhere
     const lines = text.split("\n");
-    const idx = lines.findIndex((l) => /^\s*\[(estage-dedicated|product list|tracking|section|page|app|blog)/i.test(l));
+    const idx = lines.findIndex((l) => TAG_ANYWHERE_RE.test(l));
     if (idx !== -1) {
       promptText = lines[idx].trim();
       rest = [...lines.slice(0, idx), ...lines.slice(idx + 1)].join("\n").trim();
     }
   }
 
+  // Split rest into paragraphs; filter blank lines
   const paragraphs = rest.split(/\n\n+/).filter(Boolean);
 
   return (
     <>
-      {paragraphs.map((p, i) => (
-        <p key={i}>{renderInline(p)}</p>
-      ))}
+      {paragraphs.map((p, i) => renderParagraph(p, i))}
       {promptText && <CopyBlock text={promptText} />}
     </>
   );
