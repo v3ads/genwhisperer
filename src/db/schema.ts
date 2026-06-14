@@ -90,3 +90,15 @@ export const systemSettings = pgTable("system_settings", {
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 export type InsertSystemSetting = typeof systemSettings.$inferInsert;
+
+// ─── Revoked sessions (JWT blocklist) ─────────────────────────────────────────
+// Stores jti (JWT ID) of logged-out tokens until they expire.
+// A background cleanup removes rows where expires_at < NOW() to keep the table small.
+export const revokedSessions = pgTable("revoked_sessions", {
+  jti: varchar("jti", { length: 128 }).primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type RevokedSession = typeof revokedSessions.$inferSelect;
+export type InsertRevokedSession = typeof revokedSessions.$inferInsert;
