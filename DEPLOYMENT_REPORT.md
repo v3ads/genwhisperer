@@ -1,8 +1,8 @@
 # GenWhisperer — Full Deployment Report for Claude
 
-> **Status as of 2026-06-14:** Live at `https://genwhisperer-web-production.up.railway.app`  
-> Health: `{"status":"ok","env":"production"}` ✓  
-> Custom domains `genwhisperer.com` / `www.genwhisperer.com` registered on Railway — DNS pending (see §9).
+> **Status as of 2026-06-14 (updated after bug fixes):** Live at `https://www.genwhisperer.com` (also `https://genwhisperer-web-production.up.railway.app`)
+> Health: `{"status":"ok","env":"production"}` ✓ — All 16 E2E tests passing ✓
+> TLS: `www.genwhisperer.com` valid (TLSv1.3) ✓ — Latest commit: `31989b5` (CORS + JWT logout fixes)
 
 ---
 
@@ -176,6 +176,14 @@ CREATE TABLE "message_usage" (
   "total_tokens"      integer DEFAULT 0 NOT NULL,
   "created_at"        timestamptz DEFAULT now() NOT NULL
 );
+
+-- JWT revocation blocklist (added 2026-06-14)
+CREATE TABLE "revoked_sessions" (
+  "jti"        varchar(128) PRIMARY KEY,
+  "expires_at" timestamptz NOT NULL,
+  "revoked_at" timestamptz DEFAULT now() NOT NULL
+);
+CREATE INDEX idx_revoked_sessions_expires_at ON revoked_sessions (expires_at);
 
 -- Admin-configurable settings (key/value store)
 CREATE TABLE "system_settings" (
@@ -694,3 +702,73 @@ UPDATE users SET role = 'admin' WHERE email = 'other@example.com';
 ---
 
 *Report generated 2026-06-14. All source files are in `github.com/v3ads/genwhisperer`.*
+
+---
+
+## 19. Security Bug Fixes (2026-06-14)
+
+Two security bugs were identified during end-to-end testing and fixed in commit `31989b5`:
+
+### Bug 1: CORS blocked origin returned HTTP 500
+
+**Root cause:** The CORS callback called `callback(new Error(...))` for disallowed origins, which triggered the Express error handler and returned `{"error":"Internal server error"}` with HTTP 500.
+
+**Fix:** Changed `src/index.ts` line 50 to call `callback(null, false)` instead, which correctly rejects the origin without ACAO header and without triggering the error handler.
+
+### Bug 2: Logout did not invalidate JWT server-side (H2)
+
+**Root cause:** `POST /api/auth/logout` only cleared the cookie client-side. The JWT was stateless — the server still accepted old tokens after logout, enabling session hijacking.
+
+**Fix:** Implemented a `revoked_sessions` JWT blocklist table:
+
+```sql
+CREATE TABLE revoked_sessions (
+    jti VARCHAR(128) PRIMARY KEY,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_revoked_sessions_expires_at ON revoked_sessions (expires_at);
+```
+
+Changes across 5 files:
+- `src/db/schema.ts` — added `revokedSessions` table definition
+- `src/utils/jwt.ts` — added `jti` claim to JWT payload; added `extractJti()` helper; exported `SESSION_TTL_SECONDS`
+- `src/middleware/auth.ts` — checks jti against `revoked_sessions` on every authenticated request
+- `src/routes/auth.ts` — `POST /api/auth/logout` now inserts jti into blocklist; opportunistically cleans up expired entries
+- `drizzle/migrations/0001_revoked_sessions.sql` — migration applied to Neon
+
+**Security impact:** After logout, old JWT tokens are immediately rejected (401 "Session has been revoked") even if they haven't expired yet. Blocklist entries self-expire after 365 days (matching JWT TTL). Double-logout is idempotent (`ON CONFLICT DO NOTHING`).
+
+---
+
+## 20. End-to-End Test Results (2026-06-14)
+
+All tests passing after bug fixes. Tests run against `https://genwhisperer-web-production.up.railway.app`.
+
+| Section | Test | Result |
+|---|---|---|
+| A | Reachability — health check, SPA fallback, cache headers | ✅ PASS |
+| B | Magic-link auth flow, JWT cookie, single-use enforcement | ✅ PASS |
+| C | Admin promotion by ADMIN_EMAIL, admin stats endpoint | ✅ PASS |
+| D | SSE streaming, trial cap enforcement (5 messages), 402 on exhaustion | ✅ PASS |
+| E5 | Model update (PATCH /api/account/model) | ✅ PASS |
+| F | Multi-tenant isolation (users can't see each other's keys) | ✅ PASS |
+| G1 | GetResponse "GenWhisperer" list exists (id=LJpJ3) | ✅ PASS |
+| G2 | GetResponse subscription — admin user auto-subscribed on first sign-in | ✅ PASS |
+| H1 | Logout returns 200, clears cookie | ✅ PASS |
+| H2 | Logout invalidates JWT server-side | ✅ PASS (fixed) |
+| I1 | Unauthenticated /api/chat/message → 401 | ✅ PASS |
+| I2 | Unauthenticated /api/account/api-key → 401 | ✅ PASS |
+| I3 | CORS blocked origin — no ACAO header, not 500 | ✅ PASS (fixed) |
+| I4 | CORS allowed origin — ACAO header present | ✅ PASS |
+| I5 | SQL injection in email field → 400 validation error | ✅ PASS |
+| I6 | XSS in email field → 400 validation error | ✅ PASS |
+
+**TLS/DNS status:**
+- `www.genwhisperer.com` — TLS certificate valid (TLSv1.3, Let's Encrypt), serving production app ✅
+- `genwhisperer.com` — Cloudflare Page Rule redirects to `www.genwhisperer.com` ✅
+
+**Database state after testing:**
+- 1 production user: `vipaymanshalaby@gmail.com` (role: admin)
+- Test users cleaned up from DB
+
