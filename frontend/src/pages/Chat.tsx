@@ -24,6 +24,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     chat.status().then((s) => {
@@ -35,6 +36,10 @@ export default function Chat() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, streaming]);
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   async function send(text: string) {
     const content = text.trim();
@@ -49,12 +54,15 @@ export default function Chat() {
     setStreaming("");
 
     try {
-      const final = await streamChat(next, (full) => setStreaming(full));
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const final = await streamChat(next, (full) => setStreaming(full), controller.signal);
       setMessages((m) => [...m, { role: "assistant", content: final }]);
       setStreaming("");
       // refresh trial counter
       chat.status().then(setStatus).catch(() => {});
     } catch (e) {
+      if ((e as { name?: string })?.name === "AbortError") return;
       const te = e as TrialExhausted;
       if (te?.trialExhausted) {
         setWalled(true);

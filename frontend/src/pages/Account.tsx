@@ -63,11 +63,13 @@ export default function Account() {
     } finally { setBusy(false); }
   }
 
-  async function saveModel(next: string) {
-    setModel(next);
+  function saveModel(next: string) {
+    setModel(next); // local only; committed on blur
+  }
+  async function commitModel() {
     if (!status?.hasOwnKey) return; // model only applies once they're on own key
     try {
-      await account.setModel(next);
+      await account.setModel(model);
       setMsg({ kind: "ok", text: "Model preference updated." });
     } catch { /* non-fatal */ }
   }
@@ -128,7 +130,8 @@ export default function Account() {
             <label htmlFor="model">Preferred model</label>
             <input id="model" className="inp mono" list="models" value={model}
               disabled={!status?.hasOwnKey}
-              onChange={(e) => saveModel(e.target.value)} />
+              onChange={(e) => saveModel(e.target.value)}
+              onBlur={commitModel} />
             <datalist id="models">
               {MODELS.map((m) => <option key={m} value={m} />)}
             </datalist>
