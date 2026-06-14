@@ -22,6 +22,18 @@ export interface ChatStatus {
   hasOwnKey: boolean;
   maskedKey: string | null;
   preferredModel: string;
+  isAdmin?: boolean;
+}
+
+export interface GetResponseStatus {
+  connected: boolean;
+  error?: string;
+  accountName?: string;
+  email?: string;
+  listId?: string;
+  listName?: string | null;
+  campaigns?: { id: string; name: string }[];
+  contactCount?: number;
 }
 
 export interface ChatMessage {
@@ -220,8 +232,20 @@ export const admin = {
       method: "PATCH",
       body: JSON.stringify({ suspended }),
     }),
+  setRole: (id: number, role: "user" | "admin") =>
+    request<{ success: true }>(`/admin/users/${id}/role`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
   deleteUser: (id: number) =>
     request<void>(`/admin/users/${id}`, { method: "DELETE" }),
   userUsage: (id: number) =>
     request<{ usage: unknown[] }>(`/admin/users/${id}/usage`),
+  getResponseStatus: () =>
+    request<GetResponseStatus>("/admin/getresponse/status"),
+  testSubscribe: (email: string) =>
+    request<{ success: true; note?: string }>("/admin/getresponse/test-subscribe", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
 };
