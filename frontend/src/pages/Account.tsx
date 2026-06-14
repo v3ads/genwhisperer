@@ -1,22 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { account, chat, ApiError, type ChatStatus } from "../lib/api";
+import { CURATED_MODELS, availableCuratedModels, type CuratedModel } from "../lib/models";
 import { useAuth } from "../lib/auth";
 import { Brand } from "../components/Brand";
 import "./App.css";
-
-// A practical shortlist of popular OpenRouter models. The field is also free-text
-// so any valid OpenRouter model id can be used.
-const MODELS = [
-  "deepseek/deepseek-v4-pro",
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-3.7-sonnet",
-  "openai/gpt-4o",
-  "openai/gpt-4.1",
-  "google/gemini-2.0-flash",
-  "meta-llama/llama-3.3-70b-instruct",
-  "mistralai/mistral-large",
-];
 
 export default function Account() {
   const nav = useNavigate();
@@ -24,6 +12,7 @@ export default function Account() {
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("deepseek/deepseek-v4-pro");
+  const [modelOptions, setModelOptions] = useState<CuratedModel[]>(CURATED_MODELS);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
@@ -33,7 +22,20 @@ export default function Account() {
       setModel(s.preferredModel || "deepseek/deepseek-v4-pro");
     }).catch(() => {});
   }
-  useEffect(load, []);
+
+  useEffect(() => {
+    load();
+    // Fetch live model list and intersect with curated list
+    chat.models()
+      .then((r) => {
+        const ids = r.models.map((m) => m.id);
+        setModelOptions(availableCuratedModels(ids));
+      })
+      .catch(() => {
+        // On error keep the full curated list as fallback
+        setModelOptions(CURATED_MODELS);
+      });
+  }, []);
 
   async function saveKey() {
     const key = apiKey.trim();
@@ -64,12 +66,12 @@ export default function Account() {
   }
 
   function saveModel(next: string) {
-    setModel(next); // local only; committed on blur
+    setModel(next);
   }
-  async function commitModel() {
+  async function commitModel(next: string) {
     if (!status?.hasOwnKey) return; // model only applies once they're on own key
     try {
-      await account.setModel(model);
+      await account.setModel(next);
       setMsg({ kind: "ok", text: "Model preference updated." });
     } catch { /* non-fatal */ }
   }
@@ -106,6 +108,25 @@ export default function Account() {
                   ? "Your free trial is used up. Add your key to keep building."
                   : `You're on the free trial (${status?.trialMessagesUsed ?? 0} of ${status?.trialMessageCap ?? 5} used). Add a key anytime for unlimited use.`}
               </p>
+
+              <div className="explainer">
+                <h4>What's an API key?</h4>
+                <p>
+                  GenWhisperer talks to an AI model to write your Genesis prompts. After your free
+                  messages, you connect your own AI account so you only ever pay the AI provider directly,
+                  at cost. That connection is done with an "API key" — think of it as a password that lets
+                  GenWhisperer use your account on your behalf. It's safe: we encrypt it, never show it
+                  again, and you can remove it anytime.
+                </p>
+                <p><b>How to get one (takes 2 minutes):</b></p>
+                <ol>
+                  <li>Create a free account at <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer">openrouter.ai</a>.</li>
+                  <li>Add a little credit to your account (you pay the AI provider directly, per use).</li>
+                  <li>Go to <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai/keys</a> and click "Create Key".</li>
+                  <li>Copy the key (it starts with <span className="mono">sk-or-</span>) and paste it below.</li>
+                </ol>
+              </div>
+
               <div className="field">
                 <label htmlFor="key">Key <span className="hint">— get one at openrouter.ai/keys</span></label>
                 <input id="key" className="inp mono" type="password" placeholder="sk-or-v1-..."
@@ -128,13 +149,20 @@ export default function Account() {
           </p>
           <div className="field" style={{ marginBottom: 0 }}>
             <label htmlFor="model">Preferred model</label>
-            <input id="model" className="inp mono" list="models" value={model}
+            <select
+              id="model"
+              className="sel"
+              value={model}
               disabled={!status?.hasOwnKey}
-              onChange={(e) => saveModel(e.target.value)}
-              onBlur={commitModel} />
-            <datalist id="models">
-              {MODELS.map((m) => <option key={m} value={m} />)}
-            </datalist>
+              onChange={(e) => {
+                saveModel(e.target.value);
+                commitModel(e.target.value);
+              }}
+            >
+              {modelOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.label} — {m.note}</option>
+              ))}
+            </select>
           </div>
         </div>
       </main>
