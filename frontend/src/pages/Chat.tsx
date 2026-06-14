@@ -91,7 +91,7 @@ export default function Chat() {
       <header className="chat-head">
         <Brand />
         <div className="sp" />
-        {status?.hasOwnKey ? (
+        {user?.role !== "admin" && (status?.hasOwnKey ? (
           <span className="trial-chip byok">Your key · {status.preferredModel?.split("/").pop()}</span>
         ) : (
           <span className="trial-chip">
@@ -103,15 +103,18 @@ export default function Chat() {
             <span className="chip-full">{Math.max(cap - used, 0)} free left</span>
             <span className="chip-compact">{Math.max(cap - used, 0)}/{cap}</span>
           </span>
-        )}
+        ))}
+
         {user?.role === "admin" && (
           <button className="icon-btn" title="Admin" onClick={() => nav("/admin")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18" /><path d="M7 14l4-4 3 3 5-6" /></svg>
           </button>
         )}
-        <button className="icon-btn" title="Account" onClick={() => nav("/account")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 12 0v1" /></svg>
-        </button>
+        {user?.role !== "admin" && (
+          <button className="icon-btn" title="Account" onClick={() => nav("/account")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 12 0v1" /></svg>
+          </button>
+        )}
         <button className="icon-btn" title="Sign out" onClick={() => logout().then(() => nav("/"))}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
         </button>
