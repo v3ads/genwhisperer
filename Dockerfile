@@ -12,14 +12,14 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig*.json ./
 COPY src ./src
-RUN npm run build
+RUN npm run build:server
 
 # ─── Build frontend ───────────────────────────────────────────────────────────
 FROM base AS frontend-build
-WORKDIR /app/client
-COPY client/package*.json ./
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
 RUN npm ci
-COPY client ./
+COPY frontend ./
 RUN npm run build
 
 # ─── Production image ─────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ WORKDIR /app
 
 COPY --from=backend-deps /app/node_modules ./node_modules
 COPY --from=backend-build /app/dist ./dist
-COPY --from=frontend-build /app/client/dist ./client/dist
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 COPY package.json ./
 
 ENV NODE_ENV=production
