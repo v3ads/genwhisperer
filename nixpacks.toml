@@ -1,0 +1,21 @@
+# Nixpacks build configuration for Railway
+# Single service: builds frontend (Vite) then backend (TypeScript),
+# starts the Express server which also serves the SPA.
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = [
+  "npm ci",
+  "cd frontend && npm ci"
+]
+
+[phases.build]
+cmds = [
+  "cd frontend && npm run build",
+  "npm run build:server"
+]
+
+[start]
+cmd = "node dist/index.js"
