@@ -139,7 +139,12 @@ app.use(
 // Any GET that is not /api/* and does not match a static file returns
 // index.html so client-side routes (/chat, /account, /admin, /auth/verify)
 // work on hard refresh.
-app.get("*", (_req, res) => {
+app.get("*", (req, res, next) => {
+  // Don't let the SPA fallback shadow API routes or static asset requests.
+  // Anything under /api or any path with a file extension should 404 if not matched.
+  if (req.path.startsWith("/api/") || req.path.includes(".")) {
+    return next();
+  }
   res.setHeader("Cache-Control", "no-cache");
   res.sendFile(path.join(FRONTEND_DIST, "index.html"));
 });

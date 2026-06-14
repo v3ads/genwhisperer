@@ -149,36 +149,40 @@ export async function streamChat(
   }
 
   const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = "";
-  let buffer = "";
+  try {
+    const decoder = new TextDecoder();
+    let full = "";
+    let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    // SSE frames are separated by newlines; keep the last partial line buffered
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
+      // SSE frames are separated by newlines; keep the last partial line buffered
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const payload = line.slice(6).trim();
-      if (payload === "[DONE]") return full;
-      try {
-        const json = JSON.parse(payload);
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) {
-          full += delta;
-          onDelta(full, delta);
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") return full;
+        try {
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) {
+            full += delta;
+            onDelta(full, delta);
+          }
+        } catch {
+          /* malformed chunk — skip */
         }
-      } catch {
-        /* malformed chunk — skip */
       }
     }
+    return full;
+  } finally {
+    reader.releaseLock();
   }
-  return full;
 }
 
 // --- account ---------------------------------------------------------------
