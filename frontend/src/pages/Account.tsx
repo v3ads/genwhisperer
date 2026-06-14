@@ -90,6 +90,7 @@ export default function Account() {
 
         {msg && <div className={`banner ${msg.kind === "ok" ? "banner-ok" : "banner-err"}`}>{msg.text}</div>}
 
+        {user?.role !== "admin" && (
         <div className="panel" style={{ marginBottom: 16 }}>
           <h3 style={{ marginBottom: 4 }}>OpenRouter API key</h3>
           {status?.hasOwnKey ? (
@@ -139,6 +140,7 @@ export default function Account() {
             </>
           )}
         </div>
+        )}
 
         <div className="panel">
           <h3 style={{ marginBottom: 4 }}>Model</h3>
@@ -153,7 +155,7 @@ export default function Account() {
               id="model"
               className="sel"
               value={model}
-              disabled={!status?.hasOwnKey}
+              disabled={user?.role !== "admin" && !status?.hasOwnKey}
               onChange={(e) => {
                 saveModel(e.target.value);
                 commitModel(e.target.value);
