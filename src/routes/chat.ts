@@ -51,14 +51,17 @@ router.get("/status", requireAuth, async (req: AuthRequest, res) => {
   const usedTrial = trialCount[0]?.count ?? 0;
   const hasOwnKey = ownKeyRows.length > 0;
   const ownKey = ownKeyRows[0];
+  const isAdmin = req.user!.role === "admin";
 
   res.json({
     trialMessagesUsed: usedTrial,
     trialMessageCap: cap,
-    trialExhausted: usedTrial >= cap,
+    // Admins are never considered trial-exhausted
+    trialExhausted: isAdmin ? false : usedTrial >= cap,
     hasOwnKey,
     maskedKey: hasOwnKey ? ownKey!.maskedKey : null,
     preferredModel: hasOwnKey ? ownKey!.preferredModel : await getDefaultModel(),
+    isAdmin,
   });
 });
 
@@ -92,11 +95,18 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   let model: string;
   let keyType: "trial" | "own";
 
+  const isAdmin = req.user!.role === "admin";
+
   if (ownKey) {
     // User has their own key — use it
     apiKey = decrypt(ownKey.encryptedKey);
     model = parsed.data.model ?? ownKey.preferredModel;
     keyType = "own";
+  } else if (isAdmin) {
+    // Admin always uses the platform key with no cap
+    apiKey = process.env.OPENROUTER_PLATFORM_KEY!;
+    model = await getDefaultModel();
+    keyType = "trial"; // logged as trial so usage is still tracked
   } else {
     // Trial flow — check cap
     const cap = await getTrialCap();

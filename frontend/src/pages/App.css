@@ -43,3 +43,28 @@
   .two-col .panel{flex:1;}
   .two-col .panel.wide{flex:1.6;}
 }
+
+/* ─── Tab bar ─────────────────────────────────────────────────────────────── */
+.tab-bar{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:0;}
+.tab-btn{background:none;border:none;color:var(--text-dim);font-size:13.5px;font-weight:600;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:'Sora';border-radius:0;transition:color .15s;}
+.tab-btn:hover{color:var(--text);}
+.tab-btn.active{color:var(--cyan);border-bottom-color:var(--cyan);}
+
+/* ─── GetResponse info grid ───────────────────────────────────────────────── */
+.gr-info{display:flex;flex-direction:column;gap:10px;}
+.gr-row{display:flex;align-items:center;gap:12px;font-size:13.5px;}
+.gr-label{color:var(--text-faint);font-size:12px;font-weight:600;width:90px;flex-shrink:0;}
+
+/* ─── Data table ──────────────────────────────────────────────────────────── */
+.data-table{width:100%;border-collapse:collapse;font-size:13px;}
+.data-table th{text-align:left;color:var(--text-faint);font-size:11.5px;font-weight:600;padding:6px 10px;border-bottom:1px solid var(--line);}
+.data-table td{padding:8px 10px;border-bottom:1px solid var(--line-soft);}
+.data-table tr:last-child td{border-bottom:none;}
+
+/* ─── Admin role pill ─────────────────────────────────────────────────────── */
+.tag-pill.s-admin{background:#7c3aed22;color:#a78bfa;border-color:#7c3aed44;}
+
+/* ─── KPIs 5-column on wide screens ──────────────────────────────────────── */
+@media(min-width:860px){
+  .kpis{grid-template-columns:repeat(5,1fr);}
+}
