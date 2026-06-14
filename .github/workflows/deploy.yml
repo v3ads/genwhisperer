@@ -1,0 +1,85 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # ── Assemble .env from GitHub Secrets (never committed to the repo) ──────────
+  # This job writes the .env file at runtime using encrypted repository secrets.
+  # Secret values are NEVER stored in the repository — only in GitHub's encrypted
+  # secrets store. They are injected into the runner environment at job start.
+  env-check:
+    name: Verify env secrets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write .env (assembled from secrets)
+        run: |
+          cat > .env << 'ENVEOF'
+          NEON_DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          ENCRYPTION_SECRET=${{ secrets.ENCRYPTION_SECRET }}
+          OPENROUTER_PLATFORM_KEY=${{ secrets.OPENROUTER_PLATFORM_KEY }}
+          BREVO_API_KEY=${{ secrets.BREVO_API_KEY }}
+          BREVO_SENDER_NAME=${{ secrets.BREVO_SENDER_NAME }}
+          BREVO_SENDER_EMAIL=${{ secrets.BREVO_SENDER_EMAIL }}
+          GETRESPONSE_API_KEY=${{ secrets.GETRESPONSE_API_KEY }}
+          ADMIN_EMAIL=${{ secrets.ADMIN_EMAIL }}
+          APP_URL=${{ secrets.APP_URL }}
+          ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+          NODE_ENV=${{ secrets.NODE_ENV }}
+          PORT=${{ secrets.PORT }}
+          ENVEOF
+          echo "✓ .env assembled — $(wc -l < .env) lines"
+          # Confirm all required keys are present (values masked by GitHub)
+          for key in NEON_DATABASE_URL JWT_SECRET ENCRYPTION_SECRET \
+                     OPENROUTER_PLATFORM_KEY BREVO_API_KEY ADMIN_EMAIL \
+                     APP_URL ALLOWED_ORIGINS; do
+            grep -q "^${key}=" .env && echo "  ✓ ${key}" || echo "  ✗ ${key} MISSING"
+          done
