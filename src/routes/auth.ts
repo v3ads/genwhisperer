@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { nanoid } from "nanoid";
-import { eq, and, gt } from "drizzle-orm";
-import { db, users, magicLinks } from "../db/index.js";
-import { signSession } from "../utils/jwt.js";
+import { eq, and, gt, lt } from "drizzle-orm";
+import { db, users, magicLinks, revokedSessions } from "../db/index.js";
+import { signSession, extractJti, SESSION_TTL_SECONDS } from "../utils/jwt.js";
 import { sendMagicLink, notifyNewSignup } from "../services/brevo.js";
 import { subscribeUser } from "../services/getresponse.js";
 import type { AuthRequest } from "../middleware/auth.js";
@@ -107,10 +107,6 @@ router.get("/verify", async (req, res) => {
   res.cookie(SESSION_COOKIE, sessionToken, {
     httpOnly: true,
     secure: isProduction,
-    // In production the API and frontend share the genwhisperer.com domain;
-    // use 'lax' so the cookie is sent on top-level navigations (the verify redirect).
-    // If the API lives on a subdomain (e.g. api.genwhisperer.com), switch to
-    // sameSite: 'none' and add domain: '.genwhisperer.com'
     sameSite: isProduction ? "lax" : "lax",
     domain: isProduction ? ".genwhisperer.com" : undefined,
     maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
@@ -122,7 +118,32 @@ router.get("/verify", async (req, res) => {
 });
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────
-router.post("/logout", (req, res) => {
+// Revoke the current JWT by inserting its jti into the blocklist, then clear cookie.
+router.post("/logout", async (req, res) => {
+  const token = req.cookies?.[SESSION_COOKIE];
+
+  if (token) {
+    try {
+      const jti = await extractJti(token);
+      if (jti) {
+        // Store jti in blocklist until the token would naturally expire
+        const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000);
+        await db
+          .insert(revokedSessions)
+          .values({ jti, expiresAt })
+          .onConflictDoNothing(); // idempotent — double-logout is fine
+
+        // Opportunistically clean up expired revocations (non-blocking)
+        db.delete(revokedSessions)
+          .where(lt(revokedSessions.expiresAt, new Date()))
+          .catch(console.error);
+      }
+    } catch (err) {
+      // Never let a revocation failure block the logout response
+      console.error("[Auth] Failed to revoke session jti:", err);
+    }
+  }
+
   res.clearCookie(SESSION_COOKIE, { path: "/" });
   res.json({ success: true });
 });

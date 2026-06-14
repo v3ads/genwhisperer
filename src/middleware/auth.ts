@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifySession } from "../utils/jwt.js";
-import { db, users } from "../db/index.js";
+import { db, users, revokedSessions } from "../db/index.js";
 import { eq } from "drizzle-orm";
 
 export interface AuthRequest extends Request {
@@ -22,6 +22,17 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   const session = await verifySession(token);
   if (!session) {
     res.status(401).json({ error: "Invalid or expired session" });
+    return;
+  }
+
+  // Check if this jti has been revoked (i.e. the user has logged out)
+  const revoked = await db
+    .select()
+    .from(revokedSessions)
+    .where(eq(revokedSessions.jti, session.jti))
+    .limit(1);
+  if (revoked.length > 0) {
+    res.status(401).json({ error: "Session has been revoked. Please sign in again." });
     return;
   }
 
