@@ -100,7 +100,8 @@ export default function Chat() {
                 <i key={i} className={i < used ? "used" : ""} />
               ))}
             </span>
-            {Math.max(cap - used, 0)} free left
+            <span className="chip-full">{Math.max(cap - used, 0)} free left</span>
+            <span className="chip-compact">{Math.max(cap - used, 0)}/{cap}</span>
           </span>
         )}
         {user?.role === "admin" && (
