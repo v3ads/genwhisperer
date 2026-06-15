@@ -73,7 +73,9 @@ export default function Account() {
     try {
       await account.setModel(next);
       setMsg({ kind: "ok", text: "Model preference updated." });
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "Couldn't update the model. Try again." });
+    }
   }
 
   return (
