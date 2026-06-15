@@ -34,6 +34,8 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
       subject: opts.subject,
       htmlContent: opts.htmlContent,
       textContent: opts.textContent,
+      trackClicks: false,
+      trackOpens: false,
     },
     { headers: getHeaders() }
   );
