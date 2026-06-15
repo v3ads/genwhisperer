@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, systemSettings } from "../db/index.js";
+import { DEFAULT_SYSTEM_PROMPT } from "../config/systemPrompt.js";
 
 const cache = new Map<string, string>();
 
@@ -30,6 +31,15 @@ export async function getTrialCap(): Promise<number> {
 
 export async function getDefaultModel(): Promise<string> {
   return (await getSetting("default_model")) ?? "deepseek/deepseek-v4-pro";
+}
+
+/**
+ * The system prompt used for every chat. Admins can override it via the
+ * `system_prompt` setting; otherwise the bundled default is used.
+ */
+export async function getSystemPrompt(): Promise<string> {
+  const override = await getSetting("system_prompt");
+  return override && override.trim() ? override : DEFAULT_SYSTEM_PROMPT;
 }
 
 export function invalidateCache(key?: string) {
