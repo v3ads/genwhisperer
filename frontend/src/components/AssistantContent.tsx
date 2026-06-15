@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from "react";
 
-const TAG_RE = /\[(estage-dedicated|product list|tracking|section|page|app|blog)[^\]]*\]/gi;
+// All Genesis bracket tags including aliases and structured tools
+const TAG_CORE = 'estage-dedicated|backend|dedicated|product list|products|product grid|tracking|pixel|gtm|tag manager|live controls|controls|estage video|estage courses|section|page|app|blog|undo|revert';
+const TAG_RE = new RegExp(`\\[(${TAG_CORE})[^\\]]*\\]`, 'gi');
 
 // Regex to detect a Genesis tag ANYWHERE in a line (not only at the start)
-const TAG_ANYWHERE_RE = /\[(estage-dedicated|product list|tracking|section|page|app|blog)\b/i;
+const TAG_ANYWHERE_RE = new RegExp(`\\[(${TAG_CORE})\\b`, 'i');
 
 /** Split text into React nodes, highlighting any Genesis tags inline. */
 function renderInline(text: string): ReactNode[] {

@@ -54,12 +54,12 @@ export default function Landing() {
           <div className="feat">
             <div className="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h10" /></svg></div>
             <h3>Knows every tag</h3>
-            <p>Routes power features right — <code>[estage-dedicated:]</code> for backends, <code>[product list:]</code> for catalogs, <code>[tracking:]</code> for pixels.</p>
+            <p>Routes power features right — <code>[estage-dedicated:]</code> for backends, <code>[product list:]</code> for catalogs, <code>[tracking:]</code> for pixels, <code>[Live Controls:]</code> for no-code editing panels, and more.</p>
           </div>
           <div className="feat">
             <div className="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M2 12h20" /></svg></div>
             <h3>Targets the right scope</h3>
-            <p>Knows when you mean a <code>[section:]</code>, a whole <code>[page:]</code>, an <code>[app:]</code>, or a <code>[blog:]</code> — so Genesis builds at the level you intend.</p>
+            <p>Knows when you mean a <code>[section:]</code>, a whole <code>[page:]</code>, an <code>[app:]</code>, a <code>[blog:]</code>, or an <code>[Estage Video:]</code> gallery — so Genesis builds at the level you intend.</p>
           </div>
           <div className="feat">
             <div className="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg></div>
