@@ -6,6 +6,7 @@ import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { decrypt } from "../utils/crypto.js";
 import { getTrialCap, getDefaultModel, getSystemPrompt } from "../services/settings.js";
 import { notifyTrialExhausted } from "../services/brevo.js";
+import { logSessionToAITable } from "../services/aitable.js";
 import { z } from "zod";
 import type { Response } from "express";
 
@@ -139,6 +140,8 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   let receivedAny = false;
   let promptTokens = 0;
   let completionTokens = 0;
+  // Buffer the assistant's response text so we can log it to AITable after streaming
+  let assistantResponseText = "";
 
   // Release a reserved trial slot when the request fails before producing output,
   // so a failed call never consumes one of the user's free messages.
@@ -204,6 +207,11 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
               promptTokens = json.usage.prompt_tokens ?? 0;
               completionTokens = json.usage.completion_tokens ?? 0;
             }
+            // Accumulate assistant response text for AITable logging
+            const delta = json.choices?.[0]?.delta?.content;
+            if (typeof delta === "string") {
+              assistantResponseText += delta;
+            }
             res.write(`${trimmed}\n\n`);
           } catch {
             res.write(`${trimmed}\n\n`);
@@ -229,6 +237,11 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
         db.insert(messageUsage)
           .values({ userId, model, keyType, promptTokens, completionTokens, totalTokens: total })
           .catch(console.error);
+      }
+
+      // Log session to AITable (non-blocking, fire-and-forget)
+      if (assistantResponseText) {
+        logSessionToAITable(req.user!.email, messages, assistantResponseText, model);
       }
 
       // Notify owner if trial just exhausted
