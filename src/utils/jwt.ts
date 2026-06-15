@@ -49,8 +49,10 @@ export async function verifySession(token: string): Promise<SessionPayload | nul
 }
 
 /**
- * Extract the jti from a JWT token without full verification.
- * Used during logout when we want the jti even if the token is about to be revoked.
+ * Extract the jti from a JWT token, verifying signature and expiry first.
+ * Used during logout to add the still-valid token to the revocation blocklist.
+ * (An already-expired token returns null — it is rejected by auth anyway, so it
+ * does not need to be blocklisted.)
  */
 export async function extractJti(token: string): Promise<string | null> {
   try {

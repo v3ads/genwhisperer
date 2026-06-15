@@ -13,6 +13,8 @@ import authRouter from "./routes/auth.js";
 import chatRouter from "./routes/chat.js";
 import accountRouter from "./routes/account.js";
 import adminRouter from "./routes/admin.js";
+import { csrfOriginGuard } from "./middleware/csrf.js";
+import { startCleanupJobs } from "./services/cleanup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -37,8 +39,25 @@ if (process.env.NODE_ENV !== "production") {
 // ─── Security & middleware ────────────────────────────────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    // Tuned CSP for the bundled SPA. Scripts are external hashed Vite bundles
+    // ('self'); the only third-party subresources are Google Fonts. All API
+    // traffic is same-origin, so connect-src stays 'self'.
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
   })
 );
 
@@ -90,6 +109,9 @@ const chatLimiter = rateLimit({
 });
 
 // ─── API routes ───────────────────────────────────────────────────────────────
+// CSRF defense-in-depth: reject cross-origin state-changing requests.
+app.use("/api", csrfOriginGuard(ALLOWED_ORIGINS));
+
 app.use("/api/auth", authLimiter, authRouter);
 app.use("/api/chat", chatLimiter, chatRouter);
 app.use("/api/account", accountRouter);
@@ -162,6 +184,9 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   Environment : ${process.env.NODE_ENV ?? "development"}`);
   console.log(`   Frontend    : ${FRONTEND_DIST}`);
   console.log(`   CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
+
+  // Background pruning of expired magic links and revoked sessions.
+  startCleanupJobs();
 });
 
 export default app;

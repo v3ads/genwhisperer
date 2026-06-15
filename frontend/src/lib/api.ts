@@ -157,6 +157,12 @@ export async function streamChat(
     const data = (await res.json()) as Omit<TrialExhausted, "trialExhausted">;
     throw { trialExhausted: true, ...data } as TrialExhausted;
   }
+  if (res.status === 413) {
+    throw new ApiError(
+      413,
+      "This conversation has gotten too long to send. Start a new chat to keep going."
+    );
+  }
   if (!res.ok || !res.body) {
     throw new ApiError(res.status, "Chat request failed");
   }
@@ -201,18 +207,20 @@ export async function streamChat(
 // --- account ---------------------------------------------------------------
 
 export const account = {
-  saveKey: (apiKey: string, preferredModel?: string) =>
+  saveKey: (apiKey: string, model?: string) =>
     request<{ success: true; maskedKey: string; preferredModel: string }>(
       "/account/api-key",
-      { method: "POST", body: JSON.stringify({ apiKey, preferredModel }) }
+      // Backend expects `model` (not `preferredModel`) on the wire.
+      { method: "POST", body: JSON.stringify({ apiKey, model }) }
     ),
 
   removeKey: () => request<void>("/account/api-key", { method: "DELETE" }),
 
-  setModel: (preferredModel: string) =>
+  setModel: (model: string) =>
     request<{ success: true; preferredModel: string }>("/account/model", {
       method: "PATCH",
-      body: JSON.stringify({ preferredModel }),
+      // Backend expects `model` (not `preferredModel`) on the wire.
+      body: JSON.stringify({ model }),
     }),
 };
 

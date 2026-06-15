@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { chat, streamChat, type ChatMessage, type ChatStatus, type TrialExhausted } from "../lib/api";
+import { chat, streamChat, ApiError, type ChatMessage, type ChatStatus, type TrialExhausted } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Brand, Mark } from "../components/Brand";
 import { AssistantContent } from "../components/AssistantContent";
@@ -13,10 +13,25 @@ const STARTERS = [
   "Set up Meta Pixel and Google Analytics 4 tracking",
 ];
 
+// Cap how much history we send so the request body stays well under the server's
+// 1mb limit (and to keep cost bounded). The system prompt is added server-side.
+const MAX_SENT_MESSAGES = 24;
+const HISTORY_KEY = "gw_chat_history";
+
+function loadHistory(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function Chat() {
   const nav = useNavigate();
   const { user, logout } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(loadHistory);
   const [streaming, setStreaming] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ChatStatus | null>(null);
@@ -41,6 +56,15 @@ export default function Chat() {
     return () => abortRef.current?.abort();
   }, []);
 
+  // Persist the conversation so a refresh or navigation doesn't lose it.
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(messages));
+    } catch {
+      /* storage full / unavailable — non-fatal */
+    }
+  }, [messages]);
+
   async function send(text: string) {
     const content = text.trim();
     if (!content || busy) return;
@@ -56,7 +80,9 @@ export default function Chat() {
     try {
       const controller = new AbortController();
       abortRef.current = controller;
-      const final = await streamChat(next, (full) => setStreaming(full), controller.signal);
+      // Only send the most recent turns to keep the payload bounded.
+      const payload = next.slice(-MAX_SENT_MESSAGES);
+      const final = await streamChat(payload, (full) => setStreaming(full), controller.signal);
       setMessages((m) => [...m, { role: "assistant", content: final }]);
       setStreaming("");
       // refresh trial counter
@@ -71,6 +97,9 @@ export default function Chat() {
         // drop the optimistic user msg that didn't get answered
         setMessages((m) => m.slice(0, -1));
         setInput(content);
+      } else if (e instanceof ApiError && e.status === 413) {
+        setStreaming("");
+        setMessages((m) => [...m, { role: "assistant", content: e.message }]);
       } else {
         setMessages((m) => [
           ...m,
@@ -115,7 +144,10 @@ export default function Chat() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 12 0v1" /></svg>
           </button>
         )}
-        <button className="icon-btn" title="Sign out" onClick={() => logout().then(() => nav("/"))}>
+        <button className="icon-btn" title="Sign out" onClick={() => {
+          try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ }
+          logout().then(() => nav("/"));
+        }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
         </button>
       </header>

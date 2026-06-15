@@ -1,4 +1,7 @@
-name: Deploy
+# CI for GenWhisperer. This pipeline tests and builds the app and verifies that
+# the required deployment secrets are configured. It does NOT deploy — the
+# hosting platform (Railway) deploys from `main` via its own GitHub integration.
+name: CI
 
 on:
   push:
@@ -50,36 +53,39 @@ jobs:
           path: dist/
           retention-days: 7
 
-  # ── Assemble .env from GitHub Secrets (never committed to the repo) ──────────
-  # This job writes the .env file at runtime using encrypted repository secrets.
-  # Secret values are NEVER stored in the repository — only in GitHub's encrypted
-  # secrets store. They are injected into the runner environment at job start.
-  env-check:
-    name: Verify env secrets
+  # ── Verify required deployment secrets are configured ───────────────────────
+  # Honest presence gate: fails the run if any required secret is missing so a
+  # broken deploy is caught in CI rather than at runtime. Secret values are only
+  # tested for emptiness here — they are never printed or written to disk.
+  verify-secrets:
+    name: Verify required secrets
     needs: build
     runs-on: ubuntu-latest
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ENCRYPTION_SECRET: ${{ secrets.ENCRYPTION_SECRET }}
+      OPENROUTER_PLATFORM_KEY: ${{ secrets.OPENROUTER_PLATFORM_KEY }}
+      BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      APP_URL: ${{ secrets.APP_URL }}
+      ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
     steps:
-      - name: Write .env (assembled from secrets)
+      - name: Check required secrets are present
         run: |
-          cat > .env << 'ENVEOF'
-          NEON_DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          ENCRYPTION_SECRET=${{ secrets.ENCRYPTION_SECRET }}
-          OPENROUTER_PLATFORM_KEY=${{ secrets.OPENROUTER_PLATFORM_KEY }}
-          BREVO_API_KEY=${{ secrets.BREVO_API_KEY }}
-          BREVO_SENDER_NAME=${{ secrets.BREVO_SENDER_NAME }}
-          BREVO_SENDER_EMAIL=${{ secrets.BREVO_SENDER_EMAIL }}
-          GETRESPONSE_API_KEY=${{ secrets.GETRESPONSE_API_KEY }}
-          ADMIN_EMAIL=${{ secrets.ADMIN_EMAIL }}
-          APP_URL=${{ secrets.APP_URL }}
-          ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
-          NODE_ENV=${{ secrets.NODE_ENV }}
-          PORT=${{ secrets.PORT }}
-          ENVEOF
-          echo "✓ .env assembled — $(wc -l < .env) lines"
-          # Confirm all required keys are present (values masked by GitHub)
+          missing=0
           for key in NEON_DATABASE_URL JWT_SECRET ENCRYPTION_SECRET \
                      OPENROUTER_PLATFORM_KEY BREVO_API_KEY ADMIN_EMAIL \
                      APP_URL ALLOWED_ORIGINS; do
-            grep -q "^${key}=" .env && echo "  ✓ ${key}" || echo "  ✗ ${key} MISSING"
+            if [ -z "${!key}" ]; then
+              echo "  ✗ ${key} MISSING"
+              missing=1
+            else
+              echo "  ✓ ${key}"
+            fi
           done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::One or more required secrets are not configured."
+            exit 1
+          fi
+          echo "✓ All required secrets are configured."

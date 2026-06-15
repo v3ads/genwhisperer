@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -30,14 +31,21 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 // ─── Magic-link tokens ────────────────────────────────────────────────────────
-export const magicLinks = pgTable("magic_links", {
-  id: serial("id").primaryKey(),
-  email: varchar("email", { length: 320 }).notNull(),
-  token: varchar("token", { length: 128 }).notNull().unique(),
-  used: boolean("used").default(false).notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const magicLinks = pgTable(
+  "magic_links",
+  {
+    id: serial("id").primaryKey(),
+    email: varchar("email", { length: 320 }).notNull(),
+    token: varchar("token", { length: 128 }).notNull().unique(),
+    used: boolean("used").default(false).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    // Supports cleanup of expired links (WHERE expires_at < NOW()).
+    expiresAtIdx: index("idx_magic_links_expires_at").on(t.expiresAt),
+  })
+);
 
 export type MagicLink = typeof magicLinks.$inferSelect;
 export type InsertMagicLink = typeof magicLinks.$inferInsert;
@@ -65,17 +73,26 @@ export type UserApiKey = typeof userApiKeys.$inferSelect;
 export type InsertUserApiKey = typeof userApiKeys.$inferInsert;
 
 // ─── Message usage log ────────────────────────────────────────────────────────
-export const messageUsage = pgTable("message_usage", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  model: varchar("model", { length: 128 }).notNull(),
-  /** "trial" = platform key consumed, "own" = user's own key */
-  keyType: keyTypeEnum("key_type").notNull(),
-  promptTokens: integer("prompt_tokens").default(0).notNull(),
-  completionTokens: integer("completion_tokens").default(0).notNull(),
-  totalTokens: integer("total_tokens").default(0).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const messageUsage = pgTable(
+  "message_usage",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    model: varchar("model", { length: 128 }).notNull(),
+    /** "trial" = platform key consumed, "own" = user's own key */
+    keyType: keyTypeEnum("key_type").notNull(),
+    promptTokens: integer("prompt_tokens").default(0).notNull(),
+    completionTokens: integer("completion_tokens").default(0).notNull(),
+    totalTokens: integer("total_tokens").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    // Trial-cap checks and per-user lookups filter on (user_id, key_type).
+    userKeyTypeIdx: index("idx_message_usage_user_key_type").on(t.userId, t.keyType),
+    // Admin daily-volume rollup scans by created_at.
+    createdAtIdx: index("idx_message_usage_created_at").on(t.createdAt),
+  })
+);
 
 export type MessageUsage = typeof messageUsage.$inferSelect;
 export type InsertMessageUsage = typeof messageUsage.$inferInsert;
