@@ -8,9 +8,9 @@ import "./Chat.css";
 
 const STARTERS = [
   "I want a landing page for my coaching business",
-  "Add a contact form that saves messages and emails me",
-  "Build a product catalog I can edit myself",
-  "Set up Meta Pixel and Google Analytics tracking",
+  "Build a product catalog I can edit myself without AI",
+  "Add a client portal with login and invoice history",
+  "Set up Meta Pixel and Google Analytics 4 tracking",
 ];
 
 export default function Chat() {
