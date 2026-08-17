@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Genesis AI Builder — OpenRouter + eStage</title>
+<style>
+  :root{
+    --bg:#0b0e14; --bg2:#111620; --bg3:#161c28; --panel:#0f141d; --border:#1f2937;
+    --text:#e6edf3; --muted:#8b97a7; --dim:#5c6675; --accent:#6366f1; --accent2:#818cf8;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --kb:#06b6d4; --gen:#a855f7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;overflow:hidden}
+  button{font-family:inherit;cursor:pointer}
+  input,textarea,select{font-family:inherit}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2a3548;border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:#3a4860}
+
+  /* ---------- Connection screen ---------- */
+  #connect-screen{display:flex;align-items:center;justify-content:center;height:100vh;padding:24px;overflow:auto}
+  .connect-card{width:100%;max-width:640px;background:linear-gradient(180deg,var(--bg2),var(--panel));border:1px solid var(--border);border-radius:18px;padding:34px 38px;box-shadow:0 30px 80px -20px rgba(0,0,0,.6)}
+  .connect-card h1{font-size:22px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:10px}
+  .connect-card .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--gen),var(--accent));display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+  .connect-card .sub{color:var(--muted);font-size:13.5px;margin-bottom:26px}
+  .cred-group{margin-bottom:22px}
+  .cred-group .gtitle{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:11px;display:flex;align-items:center;gap:8px}
+  .cred-group .gtitle .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  .cred-group.gen .gtitle .dot{background:var(--gen)}
+  .cred-group.or .gtitle .dot{background:var(--accent)}
+  .cred-group.kb .gtitle .dot{background:var(--kb)}
+  .cred-group .ghint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+  .field{margin-bottom:11px}
+  .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .field input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;transition:border-color .15s,box-shadow .15s}
+  .field input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+  .field input::placeholder{color:var(--dim)}
+  .pw-wrap{position:relative}
+  .pw-wrap .toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--dim);font-size:12px;padding:4px 6px}
+  .pw-wrap .toggle:hover{color:var(--text)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .conn-actions{display:flex;align-items:center;gap:12px;margin-top:8px}
+  .btn{border:1px solid var(--border);background:var(--bg3);color:var(--text);padding:10px 18px;border-radius:9px;font-size:13.5px;font-weight:500;transition:all .15s}
+  .btn:hover{border-color:#34405a;background:#1a2230}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-weight:600}
+  .btn-primary:hover{filter:brightness(1.12);background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  .btn-primary:disabled{opacity:.55;cursor:not-allowed;filter:none}
+  .conn-status{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .st-dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  .st-dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .st-dot.err{background:var(--err)}
+  .st-dot.busy{background:var(--warn);animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .store-toggle{display:flex;align-items:center;gap:8px;margin-top:18px;font-size:12px;color:var(--muted)}
+  .store-toggle input{width:14px;height:14px;accent-color:var(--accent)}
+  .err-line{color:var(--err);font-size:12.5px;margin-top:10px;min-height:16px;line-height:1.4}
+
+  /* ---------- App shell ---------- */
+  #app{display:none;height:100vh;grid-template-rows:52px 1fr;grid-template-columns:1fr 340px}
+  #app.active{display:grid}
+  .topbar{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--bg2);border-bottom:1px solid var(--border)}
+  .topbar .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14px}
+  .topbar .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--gen),var(--accent));display:flex;align-items:center;justify-content:center;font-size:14px}
+  .topbar .proj{font-size:12px;color:var(--muted);padding:5px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;display:flex;align-items:center;gap:7px;max-width:280px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .topbar .proj b{color:var(--gen);font-weight:600}
+  .topbar .spacer{flex:1}
+  .topbar select#model{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:6px 10px;font-size:12.5px;max-width:340px}
+  .topbar select#model optgroup{font-style:normal;font-weight:700;color:#818cf8;background:#0f141d}
+  .topbar select#model optgroup[label^="★"]{color:#c4b5fd}
+  .topbar select#model option{color:var(--text);font-weight:400;background:#111620}
+  .topbar .iconbtn{background:var(--bg3);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:6px 11px;font-size:12px}
+  .cost-badge{display:flex;align-items:center;gap:1px;padding:5px 11px;border-radius:8px;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(168,85,247,.18));border:1px solid rgba(129,140,248,.35);color:#c4b5fd;box-shadow:0 0 12px -3px rgba(129,140,248,.4);transition:all .2s}
+  .cost-badge .cost-coin{color:#fbbf24;font-size:13px;margin-right:1px;text-shadow:0 0 6px rgba(251,191,36,.5)}
+  .cost-badge .cost-val{color:#a5b4fc;letter-spacing:.02em}
+  .cost-badge.warn{background:linear-gradient(135deg,rgba(245,158,11,.2),rgba(239,68,68,.18));border-color:rgba(245,158,11,.5);box-shadow:0 0 12px -3px rgba(245,158,11,.5)}
+  .cost-badge.warn .cost-val{color:#fcd34d}
+  .cost-badge.high{background:linear-gradient(135deg,rgba(239,68,68,.22),rgba(236,72,153,.2));border-color:rgba(239,68,68,.5);box-shadow:0 0 14px -2px rgba(239,68,68,.55)}
+  .cost-badge.high .cost-val{color:#fca5a5}
+  .topbar .iconbtn:hover{color:var(--text);border-color:#34405a}
+
+  /* chat column */
+  .chat-col{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border-right:1px solid var(--border);background:var(--bg)}
+  .chat-header{padding:10px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);flex-shrink:0}
+  .chat-header h2{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .chat-header .tools-btn{font-size:12px;color:var(--accent2);background:none;border:none}
+  .chat-header .tools-btn:hover{text-decoration:underline}
+  .messages{flex:1;min-height:0;overflow-y:auto;padding:18px 22px 8px}
+  .msg{margin-bottom:18px;max-width:100%}
+  .msg .role{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;display:flex;align-items:center;gap:7px}
+  .msg.user .role{color:var(--accent2)}
+  .msg.assistant .role{color:var(--ok)}
+  .msg.tool .role{color:var(--warn)}
+  .msg.system .role{color:var(--dim)}
+  .msg .bubble{background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:12px 15px;font-size:13.5px;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere}
+  .msg.user .bubble{background:#1a2236;border-color:#26345a}
+  .msg.assistant .bubble{background:#13251c;border-color:#1f3a2a}
+  .bubble p{margin:0 0 8px}.bubble p:last-child{margin-bottom:0}
+  .bubble .md-h1{font-size:16px;font-weight:700;margin:6px 0 8px;color:#fff}
+  .bubble .md-h2{font-size:14.5px;font-weight:700;margin:8px 0 6px;color:#e6edf3}
+  .bubble .md-h3{font-size:13.5px;font-weight:600;margin:6px 0 4px;color:#c7d0dd}
+  .bubble strong{font-weight:700;color:#fff}
+  .bubble em{font-style:italic;color:#dfe6ee}
+  .bubble .md-code{font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:rgba(99,102,241,.18);color:#c4b5fd;padding:1px 5px;border-radius:4px}
+  .bubble .md-pre{background:#0b0e14;border:1px solid #1f2937;border-radius:7px;padding:10px 12px;overflow-x:auto;margin:8px 0}
+  .bubble .md-pre code{font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#9ca3af;white-space:pre}
+  .bubble ul.md-ul,.bubble ol.md-ol{margin:6px 0 8px;padding-left:20px}
+  .bubble ul.md-ul{list-style:disc}.bubble ol.md-ol{list-style:decimal}
+  .bubble li{margin:3px 0}
+  .bubble a{color:#818cf8;text-decoration:none}.bubble a:hover{text-decoration:underline}
+  .msg.tool .bubble{background:#1e1a14;border-color:#3a3322;font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;max-height:340px;overflow:auto}
+  .tool-card{border:1px solid var(--border);border-radius:9px;margin-bottom:10px;overflow:hidden;background:var(--bg3)}
+  .tool-card .tc-head{padding:8px 13px;background:#1c2433;display:flex;align-items:center;gap:9px;font-size:12.5px}
+  .tool-card .tc-head .badge{font-size:13px;line-height:1;flex-shrink:0}
+  .tool-card .tc-head .tc-summary{flex:1;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tool-card .tc-head .tc-state{font-size:11px;color:var(--dim);font-weight:600;flex-shrink:0;text-transform:lowercase}
+  .tool-card .tc-head .tc-state.ok{color:var(--ok)}
+  .tool-card .tc-head .tc-state.err{color:var(--err)}
+  .tool-card .tc-head .tc-state.running{color:var(--warn)}
+  .tool-card .tc-body{padding:9px 13px 11px;font-size:12px;border-top:1px solid var(--border);background:#161c28}
+  .tool-card .tc-res-summary{color:var(--muted);font-size:11.5px;line-height:1.45;margin-bottom:5px;white-space:pre-wrap;word-break:break-word;font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace}
+  .tool-card .tc-res-summary.err{color:var(--err)}
+  .tool-card .tc-details-wrap{margin-top:4px}
+  .tool-card .tc-toggle{color:var(--accent2);font-size:11px;text-decoration:none;cursor:pointer}
+  .tool-card .tc-toggle:hover{text-decoration:underline}
+  .tool-card .tc-details{display:none;margin-top:6px}
+  .tool-card .tc-res{font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;background:var(--bg);border-radius:6px;padding:8px 10px;border:1px solid var(--border);color:var(--dim);line-height:1.5}
+  .tool-card.confirm .tc-head{background:#2a2316}
+  .tool-card.confirm .confirm-actions{display:flex;gap:8px;margin-top:9px}
+  .tool-card.confirm .confirm-actions button{padding:6px 14px;border-radius:7px;font-size:12.5px;font-weight:600;border:none}
+  .tool-card.confirm .btn-approve{background:var(--ok);color:#06140a}
+  .tool-card.confirm .btn-deny{background:var(--bg);color:var(--err);border:1px solid #4a2a2a}
+  .kb-sources{margin-top:9px;border-top:1px solid var(--border);padding-top:8px}
+  .kb-sources .src-title{font-size:11px;color:var(--dim);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em}
+  .kb-sources a{display:block;color:var(--kb);font-size:12px;text-decoration:none;padding:3px 0;border-radius:4px}
+  .kb-sources a:hover{text-decoration:underline}
+  .kb-meta{font-size:11px;color:var(--dim);margin-top:6px}
+
+  .composer{border-top:1px solid var(--border);padding:12px 18px 16px;background:var(--bg2);flex-shrink:0}
+  .composer textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:11px 13px;color:var(--text);font-size:13.5px;resize:none;height:74px;max-height:200px;transition:border-color .15s,box-shadow .15s}
+  .composer textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+  .composer .comp-bar{display:flex;align-items:center;gap:10px;margin-top:9px}
+  .composer .comp-bar .hint{flex:1;font-size:11.5px;color:var(--dim)}
+  .composer .send{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600}
+  .composer .send:disabled{opacity:.5;cursor:not-allowed}
+  .composer .stop{background:var(--err);border:none;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600}
+
+  /* KB side panel */
+  .kb-col{display:flex;flex-direction:column;min-height:0;overflow:hidden;background:var(--bg)}
+  .kb-header{padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+  .kb-header h2{font-size:13px;font-weight:600;color:var(--kb);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:8px}
+  .kb-header .kb-status{font-size:11px;color:var(--dim)}
+  .kb-body{flex:1;min-height:0;overflow-y:auto;padding:14px 16px}
+  .kb-q{margin-bottom:16px}
+  .kb-q .kq-q{font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:6px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid var(--kb)}
+  .kb-q .kq-a{font-size:12.5px;color:var(--muted);line-height:1.55;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;word-wrap:break-word}
+  .kq-a p{margin:0 0 6px}.kq-a p:last-child{margin-bottom:0}
+  .kq-a strong{font-weight:700;color:#e6edf3}
+  .kq-a em{font-style:italic;color:#dfe6ee}
+  .kq-a .md-code{font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;background:rgba(6,182,212,.16);color:#67e8f9;padding:1px 4px;border-radius:4px}
+  .kq-a ul,.kq-a ol{margin:5px 0;padding-left:18px}
+  .kq-a ul{list-style:disc}.kq-a ol{list-style:decimal}
+  .kq-a li{margin:2px 0}
+  .kq-a a{color:var(--kb);text-decoration:none}.kq-a a:hover{text-decoration:underline}
+  .kb-q .kq-meta{font-size:10.5px;color:var(--dim);margin-top:5px}
+  .kb-q .kq-src{margin-top:7px}
+  .kb-q .kq-src a{display:block;color:var(--kb);font-size:11.5px;text-decoration:none;padding:2px 0}
+  .kb-q .kq-src a:hover{text-decoration:underline}
+  .kb-empty{color:var(--dim);font-size:12.5px;text-align:center;padding:30px 10px;line-height:1.6}
+  .kb-form{border-top:1px solid var(--border);padding:12px 16px;background:var(--bg2);flex-shrink:0}
+  .kb-form .kb-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:12.5px;resize:none;height:54px}
+  .kb-form .kb-input:focus{outline:none;border-color:var(--kb)}
+  .kb-form .kb-send{margin-top:8px;width:100%;background:rgba(6,182,212,.15);border:1px solid rgba(6,182,212,.4);color:var(--kb);padding:8px;border-radius:8px;font-size:12.5px;font-weight:600}
+  .kb-form .kb-send:disabled{opacity:.5;cursor:not-allowed}
+  .kb-disabled{padding:24px 16px;text-align:center;color:var(--dim);font-size:12.5px;line-height:1.6}
+
+  /* misc */
+  .toast-wrap{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+  .toast{background:var(--bg3);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:10px 14px;font-size:12.5px;max-width:340px;box-shadow:0 8px 24px rgba(0,0,0,.4);animation:slideIn .2s ease}
+  .toast.err{border-left-color:var(--err)}
+  .toast.ok{border-left-color:var(--ok)}
+  @keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
+  .modal-bg.active{display:flex}
+  .modal{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:0;width:100%;max-width:760px;max-height:80vh;display:flex;flex-direction:column}
+  .modal .m-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  .modal .m-head h3{font-size:15px;font-weight:600}
+  .modal .m-head .close{background:none;border:none;color:var(--dim);font-size:20px}
+  .modal .m-body{padding:16px 20px;overflow-y:auto;flex:1}
+  .modal .m-body .tool-item{padding:9px 0;border-bottom:1px solid var(--border);font-size:12.5px}
+  .modal .m-body .tool-item:last-child{border:none}
+  .modal .m-body .tool-item b{color:var(--gen);font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  .modal .m-body .tool-item .desc{color:var(--muted);margin-top:3px;font-size:12px}
+  .thinking{display:inline-flex;gap:4px;padding:4px 0}
+  .thinking span{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:tb 1.2s infinite}
+  .thinking span:nth-child(2){animation-delay:.2s}
+  .thinking span:nth-child(3){animation-delay:.4s}
+  @keyframes tb{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+  .ctx-strip{font-size:11.5px;color:var(--muted);padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+  .ctx-strip b{color:var(--gen)}
+</style>
+</head>
+<body>
+
+<!-- ============ CONNECTION SCREEN ============ -->
+<div id="connect-screen">
+  <div class="connect-card">
+    <h1><span class="logo">🧬</span> Genesis AI Builder</h1>
+    <div class="sub">Connect an eStage Genesis project, pick an OpenRouter model, and build with AI — grounded by the eStage knowledge base. All keys stay in your browser.</div>
+
+    <div class="cred-group gen">
+      <div class="gtitle"><span class="dot"></span> eStage Genesis project</div>
+      <div class="field">
+        <label>MCP connect URL</label>
+        <input id="gen-url" placeholder="https://genesis.estage.com/api/agent/75572/mcp" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label>One-time agent token (paste as plain text)</label>
+        <div class="pw-wrap">
+          <input id="gen-token" type="password" placeholder="x-agent-token — shown once in Genesis > Integrations > Claude Code" autocomplete="off" spellcheck="false">
+          <button class="toggle" data-t="gen-token" type="button">show</button>
+        </div>
+        <div class="ghint">In Genesis: Account → Integrations → Claude Code → pick project → copy "MCP Server URL", then generate a token (shown once). Tokens are one-time-use; a 401 means generate a fresh one.</div>
+      </div>
+    </div>
+
+    <div class="cred-group or">
+      <div class="gtitle"><span class="dot"></span> OpenRouter</div>
+      <div class="field">
+        <label>API key</label>
+        <div class="pw-wrap">
+          <input id="or-key" type="password" placeholder="sk-or-..." autocomplete="off" spellcheck="false">
+          <button class="toggle" data-t="or-key" type="button">show</button>
+        </div>
+        <div class="ghint">Get one at openrouter.ai/keys. Used to run the AI model that drives Genesis. Only function-calling-capable models are offered.</div>
+      </div>
+    </div>
+
+    <div class="cred-group kb">
+      <div class="gtitle"><span class="dot"></span> eStage Knowledge Base <span style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></div>
+      <div class="field">
+        <label>KB chat API key</label>
+        <div class="pw-wrap">
+          <input id="kb-key" type="password" placeholder="pk_live_..." autocomplete="off" spellcheck="false">
+          <button class="toggle" data-t="kb-key" type="button">show</button>
+        </div>
+        <div class="ghint">Powers the side panel + the AI's "check the KB before uncertain writes" tool. If omitted, Genesis+OpenRouter still work; KB features are disabled.</div>
+      </div>
+    </div>
+
+    <div class="conn-actions">
+      <button class="btn btn-primary" id="connect-btn">Connect</button>
+      <button class="btn" id="load-file-btn">Load from file</button>
+      <input type="file" id="creds-file" accept=".json,.txt,.csv,.env" style="display:none">
+      <div class="conn-status" id="conn-status"><span class="st-dot"></span> not connected</div>
+    </div>
+    <div class="err-line" id="conn-err"></div>
+    <div class="ghint" style="margin-top:2px">"Load from file" reads a local JSON or text file from your computer and fills all four fields — the file never leaves your browser. Format: <code style="color:var(--accent2)">genesis_url</code>, <code style="color:var(--accent2)">genesis_token</code>, <code style="color:var(--accent2)">openrouter_key</code>, <code style="color:var(--accent2)">kb_key</code>. Grab a starter: <a href="#" id="dl-template" style="color:var(--accent2)">Download template (.txt)</a> · <a href="#" id="copy-template" style="color:var(--accent2)">Copy to clipboard</a></div>
+
+    <label class="store-toggle">
+      <input type="checkbox" id="store-toggle"> Remember keys in this browser (localStorage) for next visit. Off by default for safety.
+    </label>
+  </div>
+</div>
+
+<!-- ============ APP SHELL ============ -->
+<div id="app">
+  <div class="topbar">
+    <div class="brand"><span class="logo">🧬</span> Genesis AI Builder</div>
+    <div class="proj" id="proj-info" title="">Project <b id="proj-id">—</b></div>
+    <div class="spacer"></div>
+    <div class="cost-badge" id="cost-badge" title="Running OpenRouter spend this session">
+      <span class="cost-coin">$</span><span class="cost-val" id="cost-val">0.0000</span>
+    </div>
+    <select id="model" title="OpenRouter model"></select>
+    <button class="iconbtn" id="tools-btn">Genesis tools</button>
+    <button class="iconbtn" id="context-btn">Project context</button>
+    <button class="iconbtn" id="reset-btn">Disconnect</button>
+  </div>
+
+  <div class="chat-col">
+    <div class="chat-header">
+      <h2>Agent chat</h2>
+      <div style="font-size:11px;color:var(--dim)">AI calls Genesis tools directly; consults the KB before uncertain writes.</div>
+    </div>
+    <div class="ctx-strip" id="ctx-strip"></div>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <textarea id="composer" placeholder="Ask the AI to build or change something in this Genesis project — e.g. 'Add a contact form section to the homepage' or 'Read src/App.tsx and summarize the structure'"></textarea>
+      <div class="comp-bar">
+        <div class="hint" id="comp-hint">Enter to send · Shift+Enter for newline</div>
+        <button class="send" id="send-btn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="kb-col">
+    <div class="kb-header">
+      <h2>📚 Knowledge Base</h2>
+      <div class="kb-status" id="kb-status">checking…</div>
+    </div>
+    <div class="kb-body" id="kb-body">
+      <div class="kb-empty">Ask anything about eStage / Genesis capabilities here.<br>The AI also queries this automatically before uncertain writes.</div>
+    </div>
+    <div class="kb-form" id="kb-form">
+      <textarea class="kb-input" id="kb-input" placeholder="e.g. Can Genesis build a members area with login and a feed?"></textarea>
+      <button class="kb-send" id="kb-send">Ask the knowledge base</button>
+    </div>
+  </div>
+</div>
+
+<!-- tools modal -->
+<div class="modal-bg" id="tools-modal">
+  <div class="modal">
+    <div class="m-head"><h3>Genesis tools (<span id="tools-count">0</span>)</h3><button class="close" data-close="tools-modal">×</button></div>
+    <div class="m-body" id="tools-list"></div>
+  </div>
+</div>
+
+<!-- context modal -->
+<div class="modal-bg" id="ctx-modal">
+  <div class="modal">
+    <div class="m-head"><h3>Project context (genesis_context)</h3><button class="close" data-close="ctx-modal">×</button></div>
+    <div class="m-body" id="ctx-list" style="font-family:'SF Mono',ui-monospace,Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;color:var(--muted)"></div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   Genesis AI Builder — single-file browser app
+   Three clients, all direct fetch (CORS verified):
+     1. Genesis MCP gateway (JSON-RPC 2.0, x-agent-token)
+     2. OpenRouter (chat completions + models)
+     3. eStage KB (POST /api/v1/chat, X-API-Key)
+   Agent loop: OpenRouter model with native function-calling over
+   the Genesis tool set + an estage_kb_query tool.
+   ============================================================ */
+
+const PROTOCOL_VERSION = "2024-11-05";
+const CLIENT_NAME = "genesis-ai-builder";
+const CLIENT_VERSION = "1.0.0";
+const KB_CHAT_URL = "https://kb.ramihost.cloud/api/v1/chat";
+const KB_HEALTH_URL = "https://kb.ramihost.cloud/api/v1/health";
+const OR_MODELS_URL = "https://openrouter.ai/api/v1/models";
+const OR_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+const state = {
+  gen: null,       // {url, token, projectId, rpcId, initialized, tools, context}
+  or: null,        // {key, models, modelId}
+  kb: null,        // {key, ok}
+  messages: [],    // agent conversation: {role, content, tool_calls, tool_call_id, name}
+  busy: false,
+  abort: false,
+  cost: 0,         // running OpenRouter spend this session (USD)
+};
+
+/* ---------- small utils ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg, type='') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 4200);
+}
+function setConnStatus(text, cls='') {
+  $('conn-status').innerHTML = `<span class="st-dot ${cls}"></span> ${esc(text)}`;
+}
+function projectIdFromUrl(url) {
+  const m = String(url||'').match(/\/api\/agent\/(\d+)\//);
+  return m ? m[1] : null;
+}
+
+/* ---------- password toggles ---------- */
+document.querySelectorAll('.pw-wrap .toggle').forEach(b => {
+  b.addEventListener('click', () => {
+    const inp = $(b.dataset.t);
+    if (inp.type === 'password') { inp.type='text'; b.textContent='hide'; }
+    else { inp.type='password'; b.textContent='show'; }
+  });
+});
+
+/* ============================================================
+   1. GENESIS CLIENT  (mirrors estate-genesis/genesis.py)
+   ============================================================ */
+const Genesis = {
+  async init(url, token) {
+    state.gen = { url, token, projectId: projectIdFromUrl(url), rpcId: 0, initialized: false, tools: [], context: null };
+    await this._initialize();
+    state.gen.tools = await this.listTools();
+    return state.gen;
+  },
+  _nextId() { return ++state.gen.rpcId; },
+  _headers() {
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+      'x-agent-token': state.gen.token,
+    };
+  },
+  async _post(body, { allowEmpty=false, timeoutMs=30000 } = {}) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let r;
+    try {
+      r = await fetch(state.gen.url, {
+        method: 'POST', headers: this._headers(), body: JSON.stringify(body), signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (r.status === 401) {
+      let msg = 'Invalid agent token';
+      try { const j = await r.json(); msg = (j.error||{}).message || msg; } catch(e){}
+      const e = new Error(`Genesis auth failed (401): ${msg}. The token may be wrong, revoked, or already consumed (Estage tokens are one-time-use). Generate a fresh one in Genesis > Integrations > Claude Code and paste as plain text.`);
+      e.code = 401; throw e;
+    }
+    if (r.status >= 400) {
+      const t = await r.text().catch(()=>'');
+      throw new Error(`Genesis HTTP ${r.status}: ${t.slice(0,300)}`);
+    }
+    const txt = await r.text();
+    return parseBody(txt);
+  },
+  async _initialize() {
+    if (state.gen.initialized) return;
+    await this._post({
+      jsonrpc:'2.0', id:this._nextId(), method:'initialize',
+      params: { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: CLIENT_NAME, version: CLIENT_VERSION } },
+    });
+    // notifications/initialized — no response expected; ignore failures
+    try {
+      await fetch(state.gen.url, {
+        method:'POST', headers:this._headers(),
+        body: JSON.stringify({ jsonrpc:'2.0', method:'notifications/initialized' }),
+      });
+    } catch(e) {}
+    state.gen.initialized = true;
+  },
+  async listTools() {
+    const j = await this._post({ jsonrpc:'2.0', id:this._nextId(), method:'tools/list', params:{} });
+    return ((j||{}).result||{}).tools || [];
+  },
+  async callTool(name, arguments_) {
+    const j = await this._post({ jsonrpc:'2.0', id:this._nextId(), method:'tools/call',
+      params: { name, arguments: arguments_ || {} } });
+    const result = (j||{}).result || j;
+    // MCP content array → joined text
+    if (result && Array.isArray(result.content)) {
+      const texts = result.content.filter(c => c.type==='text').map(c => c.text||'');
+      const out = texts.join('\n');
+      if (result.isError) { const e = new Error(out || 'Tool error'); e.toolError = true; throw e; }
+      return out;
+    }
+    return JSON.stringify(result, null, 2);
+  },
+};
+
+function parseBody(body) {
+  if (!body) return null;
+  try { return JSON.parse(body); } catch(e) {}
+  for (const line of body.split('\n')) {
+    if (line.startsWith('data:')) {
+      try { return JSON.parse(line.slice(5).trim()); } catch(e) {}
+    }
+  }
+  return null;
+}
+
+/* ============================================================
+   2. OPENROUTER CLIENT
+   ============================================================ */
+const OpenRouter = {
+  async fetchModels(key) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    let r;
+    try {
+      r = await fetch(OR_MODELS_URL, { headers: key ? { Authorization: `Bearer ${key}` } : {}, signal: ctrl.signal });
+    } catch(e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('OpenRouter /models timed out (15s). Check your internet connection.');
+      throw new Error(`OpenRouter /models unreachable: ${e.message}`);
+    }
+    clearTimeout(timer);
+    if (!r.ok) {
+      if (r.status === 401) throw new Error('OpenRouter API key invalid (401). Check the key at openrouter.ai/keys.');
+      throw new Error(`OpenRouter /models HTTP ${r.status}`);
+    }
+    const j = await r.json();
+    const all = j.data || [];
+    // Option A filter: function-calling capable + context >= 128k + not :free/:batch/:nitro
+    const capable = all.filter(m => {
+      if (!(m.supported_parameters || []).includes('tools')) return false;
+      if ((m.context_length || 0) < 128000) return false;
+      const id = m.id || '';
+      if (id.endsWith(':free')) return false;
+      if (id.endsWith(':batch')) return false;   // async batch mode — not interactive
+      if (id.includes(':nitro')) return false;    // routing variant, not a different model
+      return true;
+    });
+    // Group: known-strong agent families first ("Recommended"), then the rest alphabetically.
+    // Each model is tagged with .group so the picker can use optgroups.
+    const STRONG = ['anthropic/claude','openai/gpt-5','google/gemini-3','qwen/qwen','deepseek/deepseek-v4','xai/grok-4','z-ai/glm-5','moonshotai/kimi'];
+    const rec = [], rest = [];
+    for (const m of capable) {
+      const id = m.id || '';
+      if (STRONG.some(p => id.startsWith(p))) { m._group = 'Recommended'; rec.push(m); }
+      else { m._group = 'All capable models'; rest.push(m); }
+    }
+    const byName = (a,b) => (a.name||a.id).localeCompare(b.name||b.id);
+    rec.sort(byName); rest.sort(byName);
+    return rec.concat(rest);
+  },
+  async chat({ model, messages, tools, signal }) {
+    const body = { model, messages, temperature: 0.3 };
+    if (tools && tools.length) {
+      body.tools = tools;
+      body.tool_choice = 'auto';
+      body.parallel_tool_calls = false; // safer for sequential Genesis ops
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120000);
+    // also honor an externally-passed signal (e.g. user Stop) if present
+    if (signal) { try { signal.addEventListener('abort', () => ctrl.abort()); } catch(e){} }
+    let r;
+    try {
+      r = await fetch(OR_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.or.key}`,
+          'X-Title': 'Genesis AI Builder',
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } catch(e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw Object.assign(new Error(state.abort ? 'Stopped.' : 'OpenRouter chat timed out (120s).'), {name:'AbortError'});
+      throw new Error(`OpenRouter unreachable: ${e.message}`);
+    }
+    clearTimeout(timer);
+    if (r.status === 401) throw Object.assign(new Error('OpenRouter 401: invalid API key.'), {code:401});
+    if (!r.ok) {
+      const t = await r.text().catch(()=>'');
+      throw new Error(`OpenRouter HTTP ${r.status}: ${t.slice(0,400)}`);
+    }
+    const j = await r.json();
+    return j;
+  },
+};
+
+/* ============================================================
+   3. eSTAGE KB CLIENT
+   ============================================================ */
+const KB = {
+  async health() {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    let r;
+    try { r = await fetch(KB_HEALTH_URL, { signal: ctrl.signal }); }
+    catch(e) { clearTimeout(timer); throw new Error(`KB health unreachable: ${e.message}`); }
+    clearTimeout(timer);
+    if (!r.ok) throw new Error(`KB health HTTP ${r.status}`);
+    return r.json();
+  },
+  async ask(question, { topK=5, context=null } = {}) {
+    const body = { question, top_k: topK };
+    if (context) body.context = context;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    let r;
+    try {
+      r = await fetch(KB_CHAT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': state.kb.key },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } catch(e) {
+      clearTimeout(timer);
+      if (e.name === 'AbortError') throw new Error('KB query timed out (60s).');
+      throw new Error(`KB unreachable: ${e.message}`);
+    }
+    clearTimeout(timer);
+    if (r.status === 401) throw Object.assign(new Error('KB 401: invalid API key.'), {code:401});
+    if (r.status === 422) {
+      const t = await r.text().catch(()=>'');
+      throw new Error(`KB 422: ${t.slice(0,200)}`);
+    }
+    if (!r.ok) {
+      const t = await r.text().catch(()=>'');
+      throw new Error(`KB HTTP ${r.status}: ${t.slice(0,300)}`);
+    }
+    return r.json();
+  },
+};
+
+/* ============================================================
+   SYSTEM PROMPT  (Genesis guardrails baked in)
+   ============================================================ */
+function buildSystemPrompt() {
+  const toolNames = state.gen.tools.map(t => t.name).join(', ');
+  return `You are an expert eStage Genesis project builder operating inside a browser app.
+You are connected to a specific Genesis project and can read/write its code, preview, publish, and manage backend/media/connectors through MCP tools.
+
+AVAILABLE GENESIS TOOLS: ${toolNames}
+
+You also have the tool estage_kb_query to query the official eStage knowledge base (knowledge.estage.com) for grounded, cited answers about platform capabilities and the correct approach for a task.
+
+OPERATING RULES (from the eStage Genesis skill guardrails — follow strictly):
+1. FIRST call genesis_context (if not already provided in the conversation) to read the project contract (AGENTS.md edit rules, file tree, chrome strategy, scopes) before editing anything.
+2. Prefer genesis_read_files (batch) over genesis_read_file for several files.
+3. Prefer genesis_edit_file (surgical old_string→new_string) over genesis_write_file for changes to existing files; use write_file only for new files or full rewrites.
+4. AFTER any code edit, call genesis_preview_logs to confirm the edit compiles before doing anything else (and before publishing).
+5. Read genesis_cloud_schema before any SQL. Never fabricate tables/columns.
+6. BEFORE performing a Genesis WRITE/EDIT/PUBLISH/PROVISION operation (genesis_write_file, genesis_edit_file, genesis_delete_file, genesis_publish, genesis_apply_patch, genesis_cloud_migrate, genesis_cloud_sql with allowWrite, genesis_provision_element, genesis_subdomain_connect, genesis_ssr_publish, genesis_connector_save, genesis_tracking_set) whose feasibility or exact approach you are UNSURE of, call estage_kb_query to verify against the official eStage knowledge base first, read the answer and citations, then proceed. If the KB query resolves your uncertainty, proceed; if it reveals the operation isn't supported, tell the user instead.
+7. Never use aws s3, bash, or local file tools to read/write the project — always go through the genesis_ MCP tools so writes pass Genesis's validation pipeline.
+8. Generated sites are end products — no dead links, no TODOs, no placeholders.
+9. ALWAYS write a short plain-English sentence in your message content BEFORE each tool call explaining what you are about to do and why (e.g. "Let me read the current home page file to see its structure." then call genesis_read_files). The user reads your narration, not the raw tool output. After all tool calls complete, give a concise final summary of what you did and what to verify (e.g. "I changed the home page to a dark color palette and the preview compiled clean — check the live preview, then say the word and I'll publish."). Narrate in a calm, capable voice.
+10. If a tool call errors, read the error, adjust, and retry once; if it still fails, report the error to the user rather than hammering.
+
+The current project's genesis_context (if already fetched) may be included in the conversation. Use it; do not re-fetch unnecessarily.`;
+}
+
+/* Convert Genesis MCP tool defs → OpenRouter tool schema */
+function genesisToolsToORTools() {
+  const tools = state.gen.tools.map(t => ({
+    type: 'function',
+    function: {
+      name: t.name,
+      description: (t.description || '').slice(0, 1800),
+      parameters: (t.inputSchema && Object.keys(t.inputSchema).length) ? t.inputSchema : { type:'object', properties:{} },
+    },
+  }));
+  // add the KB query tool
+  tools.push({
+    type: 'function',
+    function: {
+      name: 'estage_kb_query',
+      description: 'Query the official eStage knowledge base (knowledge.estage.com) for a grounded, cited answer about eStage/Genesis platform capabilities and the correct approach for a task. Use this BEFORE uncertain Genesis write/edit/publish/provision operations to verify feasibility and the right method. Returns the answer plus source citations.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'Natural-language question about eStage/Genesis capabilities or how to do something on the platform.' },
+          top_k: { type: 'integer', description: 'Number of KB chunks to ground the answer (default 5, use 8 for capability-mapping).', default: 5 },
+        },
+        required: ['question'],
+      },
+    },
+  });
+  return tools;
+}
+
+/* High-impact Genesis tools that warrant a user confirmation */
+const CONFIRM_TOOLS = new Set([
+  'genesis_publish','genesis_delete_file','genesis_apply_patch',
+  'genesis_cloud_migrate','genesis_provision_element','genesis_subdomain_connect',
+  'genesis_ssr_publish','genesis_tracking_set',
+]);
+/* genesis_cloud_sql needs allowWrite to be confirmable; handled in callTool dispatch */
+
+/* ============================================================
+   AGENT LOOP
+   ============================================================ */
+async function runAgent(userText) {
+  if (state.busy) return;
+  state.busy = true; state.abort = false;
+  $('send-btn').disabled = true;
+  setHint('Working…');
+  addStopButton();
+
+  try {
+  // seed context once
+  let ctxSeeded = state.messages.some(m => m.role==='system' && m._ctx);
+  if (!ctxSeeded && state.gen.context) {
+    const ctxMsg = { role:'system', _ctx:true, content: `genesis_context result for this project:\n\n${state.gen.context}` };
+    state.messages.push(ctxMsg);
+  }
+  // refresh the system prompt in-place (replace any existing _sys message, keep all other history)
+  const sysIdx = state.messages.findIndex(m => m.role==='system' && m._sys);
+  const newSys = { role:'system', _sys:true, content: buildSystemPrompt() };
+  if (sysIdx >= 0) state.messages[sysIdx] = newSys;
+  else state.messages.unshift(newSys);
+
+  // user turn
+  state.messages.push({ role:'user', content: userText });
+  renderUser(userText);
+
+  const tools = genesisToolsToORTools();
+  let iterations = 0;
+  const MAX_ITER = 14;
+
+    while (iterations++ < MAX_ITER) {
+      if (state.abort) { addAssistant('(stopped by user)'); break; }
+      showThinking(true);
+      setHint('Thinking…');
+      let resp;
+      try {
+        resp = await OpenRouter.chat({ model: state.or.modelId, messages: state.messages, tools });
+      } catch(e) {
+        showThinking(false);
+        if (e.name === 'AbortError' || state.abort) { addAssistant('(stopped)'); break; }
+        addAssistant(`⚠️ OpenRouter error: ${esc(e.message)}`);
+        toast(e.message, 'err');
+        break;
+      }
+      showThinking(false);
+      // accumulate running cost from this response
+      if (resp && resp.usage) addCost(resp.usage);
+
+      const choice = resp.choices && resp.choices[0];
+      if (!choice) { addAssistant('⚠️ No choice in OpenRouter response.'); break; }
+      const msg = choice.message || {};
+      // append assistant message (with possible tool_calls)
+      const assistantRecord = { role:'assistant', content: msg.content || '', tool_calls: msg.tool_calls || null };
+      state.messages.push(assistantRecord);
+
+      if (msg.tool_calls && msg.tool_calls.length) {
+        // optional preamble text
+        if (msg.content) renderAssistant(msg.content);
+        // execute each tool call
+        for (const tc of msg.tool_calls) {
+          if (state.abort) break;
+          const fn = tc.function;
+          let args = {};
+          try { args = fn.arguments ? JSON.parse(fn.arguments) : {}; } catch(e) { args = {}; }
+          setHint('Running: ' + toolSummary(fn.name, args));
+          await executeToolCall(tc.id, fn.name, args);
+        }
+        setHint('Thinking…');
+        continue; // loop again so the model sees tool results
+      } else {
+        // final answer
+        renderAssistant(msg.content || '(no content)');
+        break;
+      }
+    }
+    if (iterations > MAX_ITER && !state.abort) addAssistant('⚠️ Reached the max tool-call iteration limit. Ask me to continue or narrow the task.');
+  } catch(e) {
+    showThinking(false);
+    addAssistant(`⚠️ ${esc(e.message)}`);
+    toast(e.message, 'err');
+  } finally {
+    state.busy = false;
+    $('send-btn').disabled = false;
+    setHint('Enter to send · Shift+Enter for newline');
+    removeStopButton();
+    scrollMessages();
+  }
+}
+
+/* status hint under the composer — always tells you what's happening */
+function setHint(text) {
+  const el = $('comp-hint');
+  if (el) {
+    el.textContent = text;
+    el.style.color = (text === 'Enter to send · Shift+Enter for newline') ? 'var(--dim)' : 'var(--accent2)';
+  }
+}
+
+/* running OpenRouter cost — computed from usage tokens + the selected model's pricing */
+function addCost(usage) {
+  if (!usage || !state.or) return;
+  const m = state.or.models.find(x => x.id === state.or.modelId);
+  const pr = (m && m.pricing) || {};
+  const pTok = parseFloat(pr.prompt || 0);       // per token
+  const cTok = parseFloat(pr.completion || 0);
+  const cacheRead = parseFloat(pr.input_cache_read || 0);
+  const promptTokens = usage.prompt_tokens || 0;
+  const completionTokens = usage.completion_tokens || 0;
+  const cached = (usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) || 0;
+  const callCost = (promptTokens * pTok) + (completionTokens * cTok) - (cached * (pTok - cacheRead));
+  state.cost += Math.max(0, callCost);
+  updateCostBadge();
+}
+function updateCostBadge() {
+  const v = $('cost-val'); if (!v) return;
+  v.textContent = state.cost.toFixed(4);
+  const badge = $('cost-badge');
+  badge.classList.remove('warn','high');
+  if (state.cost >= 1.00) badge.classList.add('high');
+  else if (state.cost >= 0.25) badge.classList.add('warn');
+}
+
+/* Execute one tool call — Genesis or KB, with confirmation gate */
+async function executeToolCall(toolCallId, name, args) {
+  const isKB = name === 'estage_kb_query';
+  // confirmation gate for high-impact Genesis writes
+  let approved = true, denyReason = null;
+  let needsConfirm = false;
+  if (!isKB && CONFIRM_TOOLS.has(name)) needsConfirm = true;
+  if (name === 'genesis_cloud_sql' && args && args.allowWrite) needsConfirm = true;
+
+  if (needsConfirm) {
+    approved = await askConfirm(name, args);
+    if (!approved) denyReason = 'User denied this write operation.';
+  }
+
+  // tool execution happens silently — the AI narrates in plain English;
+  // no tool-call cards in the chat (removed per user request)
+
+  let resultText;
+  if (!approved) {
+    resultText = denyReason;
+  } else if (isKB) {
+    try {
+      const r = await KB.ask(args.question, { topK: args.top_k || 5 });
+      resultText = r.answer || '(no answer)';
+      // surface KB answers in the side panel (separate from chat)
+      addKBEntry(args.question, r);
+    } catch(e) {
+      resultText = `KB query failed: ${e.message}`;
+      toast(`KB query failed: ${e.message}`, 'err');
+    }
+  } else {
+    try {
+      resultText = await Genesis.callTool(name, args);
+    } catch(e) {
+      resultText = e.toolError ? e.message : `Tool error: ${e.message}`;
+      if (e.code === 401) toast('Genesis token invalid/used. Generate a fresh one.', 'err');
+    }
+  }
+
+  // feed result back to the model as a tool message
+  state.messages.push({
+    role: 'tool', tool_call_id: toolCallId, name, content: resultText,
+  });
+}
+
+/* Confirmation dialog (returns promise → bool) */
+function askConfirm(name, args) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg tool';
+    wrap.innerHTML = `<div class="role">⚠️ Confirmation required</div>
+      <div class="tool-card confirm">
+        <div class="tc-head"><span class="badge confirm">confirm</span> ${esc(name)}</div>
+        <div class="tc-body">
+          <div style="margin-bottom:6px">This is a high-impact Genesis operation. Approve before it runs:</div>
+          <div class="tc-args">${esc(JSON.stringify(args, null, 2))}</div>
+          <div class="confirm-actions">
+            <button class="btn-approve">Approve</button>
+            <button class="btn-deny">Deny</button>
+          </div>
+        </div>
+      </div>`;
+    $('messages').appendChild(wrap);
+    scrollMessages();
+    wrap.querySelector('.btn-approve').onclick = () => { wrap.remove(); resolve(true); };
+    wrap.querySelector('.btn-deny').onclick = () => { wrap.remove(); resolve(false); };
+  });
+}
+
+/* ============================================================
+   RENDERING
+   ============================================================ */
+
+/* Markdown → HTML renderer (safe): escapes HTML first, then converts the
+   common subset (**bold**, *italic*, `code`, #/## headers, bullet/numbered
+   lists, blank-line paragraphs, [text](url) links, ```code blocks```). */
+function mdToHtml(md) {
+  let s = String(md == null ? '' : md);
+  // escape HTML first
+  s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // fenced code blocks ```...```
+  s = s.replace(/```([\s\S]*?)```/g, (_, code) => '<pre class="md-pre"><code>' + code.replace(/^\n/,'') + '</code></pre>');
+  // inline code `...`
+  s = s.replace(/`([^`\n]+)`/g, '<code class="md-code">$1</code>');
+  // links [text](url) — only https? links
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // plain urls on their own line -> linkify
+  s = s.replace(/(^|\n)(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  // headers ### / ## / #
+  s = s.replace(/^###\s+(.*)$/gm, '<div class="md-h3">$1</div>');
+  s = s.replace(/^##\s+(.*)$/gm, '<div class="md-h2">$1</div>');
+  s = s.replace(/^#\s+(.*)$/gm, '<div class="md-h1">$1</div>');
+  // bold + italic (bold first so ** isn't eaten by *)
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__([^_\n]+?)__/g, '<strong>$1</strong>');
+  s = s.replace(/(?<![\*\w])\*([^*\n]+?)\*(?![\*\w])/g, '<em>$1</em>');
+  s = s.replace(/(?<![\w_])_([^_\n]+?)_(?![\w_])/g, '<em>$1</em>');
+  // bullet lists (- or *) — collapse consecutive lines into <ul>
+  s = s.replace(/(?:^|\n)((?:\s*[-*]\s+.*(?:\n|$))+)/g, (block) => {
+    const items = block.trim().split(/\n/).map(line => line.replace(/^\s*[-*]\s+/, '').trim()).filter(Boolean);
+    return '\n<ul class="md-ul">' + items.map(i => '<li>' + i + '</li>').join('') + '</ul>';
+  });
+  // numbered lists
+  s = s.replace(/(?:^|\n)((?:\s*\d+\.\s+.*(?:\n|$))+)/g, (block) => {
+    const items = block.trim().split(/\n/).map(line => line.replace(/^\s*\d+\.\s+/, '').trim()).filter(Boolean);
+    return '\n<ol class="md-ol">' + items.map(i => '<li>' + i + '</li>').join('') + '</ol>';
+  });
+  // blank line → paragraph break; single newlines → <br>
+  s = s.replace(/\n{2,}/g, '</p><p>');
+  s = s.replace(/\n/g, '<br>');
+  // wrap bare text in <p> (skip block-level elements already inserted)
+  s = s.split('</p><p>').map(seg => {
+    if (/^<(h\d|ul|ol|pre|div)/.test(seg.trim()) || seg.trim()==='') return seg;
+    return '<p>' + seg + '</p>';
+  }).join('</p><p>');
+  // tidy: remove empty <p></p>
+  s = s.replace(/<p>\s*<\/p>/g, '');
+  return s;
+}
+
+function renderUser(text) {
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.innerHTML = `<div class="role">You</div><div class="bubble">${mdToHtml(text)}</div>`;
+  $('messages').appendChild(d); scrollMessages();
+}
+function renderAssistant(text) {
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+  d.innerHTML = `<div class="role">Assistant</div><div class="bubble">${mdToHtml(text)}</div>`;
+  $('messages').appendChild(d); scrollMessages();
+}
+// alias used by the agent loop's error/status paths
+const addAssistant = renderAssistant;
+/* Build a compact human-readable one-liner for a tool call.
+   e.g. genesis_read_files(src/App.tsx, src/theme.json) -> "📖 Read src/App.tsx, src/theme.json"
+        genesis_write_file(src/pages/Home.jsx)          -> "✏️ Write src/pages/Home.jsx"
+        genesis_edit_file(src/App.tsx)                   -> "✏️ Edit src/App.tsx"
+        genesis_preview_logs()                           -> "🔍 Check preview logs"
+        genesis_publish()                                -> "🚀 Publish"
+        genesis_context()                                -> "📖 Read project context"
+        estage_kb_query("how to dark theme?")             -> "📚 KB: how to dark theme?"
+*/
+function toolSummary(name, args) {
+  const a = args || {};
+  const argList = (xs) => {
+    if (Array.isArray(xs)) return xs.join(', ');
+    if (typeof xs === 'string') return xs;
+    return '';
+  };
+  switch (name) {
+    case 'genesis_context': return '📖 Read project context';
+    case 'genesis_read_file': return `📖 Read ${esc(argList(a.path)||'')}`;
+    case 'genesis_read_files': return `📖 Read ${esc(argList(a.paths)||'')}`;
+    case 'genesis_search': return `🔍 Search project for "${esc(a.query||'')}"`;
+    case 'genesis_write_file': return `✏️ Write ${esc(a.path||'')}`;
+    case 'genesis_edit_file': return `✏️ Edit ${esc(a.path||'')}`;
+    case 'genesis_apply_patch': return `✏️ Apply patch to ${esc(a.path||'project')}`;
+    case 'genesis_delete_file': return `🗑️ Delete ${esc(a.path||'')}`;
+    case 'genesis_reconcile_pages': return `🔄 Reconcile pages`;
+    case 'genesis_selection': return `👀 Read current selection`;
+    case 'genesis_list_projects': return `📖 List projects`;
+    case 'genesis_read_project': return `📖 Read another project`;
+    case 'genesis_preview': return `🖥️ Warm preview`;
+    case 'genesis_preview_logs': return `🔍 Check preview logs (did it compile?)`;
+    case 'genesis_screenshot': return `📸 Screenshot live preview`;
+    case 'genesis_publish': return `🚀 Publish to live CDN`;
+    case 'genesis_cloud_status': return `🗄️ Cloud status`;
+    case 'genesis_cloud_schema': return `🗄️ Read DB schema`;
+    case 'genesis_cloud_sql': return `🗄️ Run SQL${a.allowWrite ? ' (write)' : ' (read)'}: ${esc(String(a.sql||'').slice(0,60))}`;
+    case 'genesis_cloud_migrate': return `🗄️ Run DB migration`;
+    case 'genesis_cloud_functions': return `🗄️ List edge functions`;
+    case 'genesis_cloud_function_deploy': return `🗄️ Deploy edge function ${esc(a.name||'')}`;
+    case 'genesis_cloud_function_logs': return `🗄️ Edge function logs: ${esc(a.name||'')}`;
+    case 'genesis_cloud_secrets_list': return `🗄️ List secrets`;
+    case 'genesis_cloud_secret_set': return `🗄️ Set secret ${esc(a.key||'')}`;
+    case 'genesis_cloud_secret_delete': return `🗄️ Delete secret ${esc(a.key||'')}`;
+    case 'genesis_cloud_realtime': return `🗄️ Cloud realtime`;
+    case 'genesis_generate_image': return `🎨 Generate image: ${esc(String(a.prompt||'').slice(0,50))}`;
+    case 'genesis_generate_video': return `🎬 Generate video: ${esc(String(a.prompt||'').slice(0,50))}`;
+    case 'genesis_edit_video': return `🎬 Edit video`;
+    case 'genesis_elements': return `🧩 List elements`;
+    case 'genesis_provision_element': return `🧩 Provision element: ${esc(a.type||'')}`;
+    case 'genesis_crm_status': return `👤 CRM status`;
+    case 'genesis_crm_provision_auth': return `👤 Provision member auth`;
+    case 'genesis_global_vars': return `⚙️ List global variables`;
+    case 'genesis_global_var_set': return `⚙️ Set global variable ${esc(a.key||'')}`;
+    case 'genesis_global_var_delete': return `⚙️ Delete global variable ${esc(a.key||'')}`;
+    case 'genesis_data_files': return `📂 List data files`;
+    case 'genesis_data_file_read': return `📂 Read data file ${esc(a.path||'')}`;
+    case 'genesis_data_file_write': return `📂 Write data file ${esc(a.path||'')}`;
+    case 'genesis_connectors': return `🔌 List connectors`;
+    case 'genesis_connector_save': return `🔌 Save connector ${esc(a.type||'')}`;
+    case 'genesis_connector_admin': return `🔌 Connector admin: ${esc(a.type||'')}`;
+    case 'genesis_connector_delete': return `🔌 Delete connector ${esc(a.type||'')}`;
+    case 'genesis_supabase_auth_sync': return `🔌 Sync Supabase auth`;
+    case 'genesis_contracts_list': return `📜 List site AI contracts`;
+    case 'genesis_contract_save': return `📜 Save site AI contract`;
+    case 'genesis_contract_delete': return `📜 Delete site AI contract`;
+    case 'genesis_blog_write_post': return `✍️ Write blog post: ${esc(String(a.title||'').slice(0,50))}`;
+    case 'genesis_tracking_set': return `📊 Set tracking: ${esc(a.type||'')}`;
+    case 'genesis_localize': return `🌐 Localize site`;
+    case 'genesis_pages': return `📄 List pages`;
+    case 'genesis_page_folder_create': return `📄 Create page folder ${esc(a.name||'')}`;
+    case 'genesis_page_move': return `📄 Move page`;
+    case 'genesis_subdomains': return `🌐 List subdomains`;
+    case 'genesis_subdomain_connect': return `🌐 Connect subdomain ${esc(a.subdomain||'')}`;
+    case 'genesis_ssr_status': return `🌐 SSR status`;
+    case 'genesis_ssr_publish': return `🌐 Publish SSR`;
+    case 'genesis_ssr_install_package': return `🌐 Install SSR package`;
+    case 'genesis_ssr_scale': return `🌐 Scale SSR`;
+    case 'genesis_ssr_restart': return `🌐 Restart SSR`;
+    case 'genesis_ask_user': return `❓ Ask user: ${esc(String(a.question||'').slice(0,60))}`;
+    case 'estage_kb_query': return `📚 KB: ${esc(String(a.question||'').slice(0,70))}`;
+    default: return `${esc(name)}`;
+  }
+}
+
+function renderToolCall(name, args, opts={}) {
+  const d = document.createElement('div');
+  d.className = 'msg tool';
+  const badge = opts.isKB ? 'kb' : 'gen';
+  const stateLabel = opts.pending ? 'running…' : 'done';
+  const summary = toolSummary(name, args);
+  const icon = opts.isKB ? '📚' : '🧬';
+  d.innerHTML = '<div class="role">Tool call</div>' +
+    '<div class="tool-card">' +
+      '<div class="tc-head"><span class="badge ' + badge + '">' + icon + '</span> ' +
+      '<span class="tc-summary">' + summary + '</span> ' +
+      '<span class="tc-state running">' + stateLabel + '</span></div>' +
+    '</div>';
+  d.dataset.toolCallId = name + Math.random().toString(36).slice(2,7);
+  d.dataset.pending = '1';
+  d.dataset.toolName = name;
+  $('messages').appendChild(d); scrollMessages();
+  return d;
+}
+
+function renderToolResult(toolCallId, name, text, opts={}) {
+  // find the last pending tool-call card for this name
+  const allCards = $('messages').querySelectorAll('.msg.tool .tool-card');
+  let target = null;
+  for (let i = allCards.length - 1; i >= 0; i--) {
+    const parent = allCards[i].parentElement;
+    if (parent.dataset.pending === '1' && parent.dataset.toolName === name) {
+      target = allCards[i]; break;
+    }
+  }
+  const fullText = String(text || '');
+  const snippet = fullText.length > 220 ? fullText.slice(0,220) + '…' : fullText;
+  const hasMore = fullText.length > 220;
+  const detailsId = 'det-' + Math.random().toString(36).slice(2,9);
+
+  const resultSummary = opts.error
+    ? '<div class="tc-res-summary err">failed — ' + esc(snippet) + '</div>'
+    : '<div class="tc-res-summary">' + esc(snippet) + '</div>';
+  const detailsHtml = hasMore
+    ? '<div class="tc-details-wrap"><a href="#" class="tc-toggle" data-det="' + detailsId + '">show details</a>' +
+      '<div class="tc-details" id="' + detailsId + '"><div class="tc-res">' + esc(fullText) + '</div></div></div>'
+    : '';
+  const kbHtml = (opts.isKB && opts.sources && opts.sources.length) ? kbSourcesHtml(opts.sources, opts.meta) : '';
+  const bodyHtml = resultSummary + detailsHtml + kbHtml;
+
+  function wireToggle(scope) {
+    const tog = scope.querySelector('.tc-toggle');
+    if (!tog) return;
+    tog.onclick = function(e) {
+      e.preventDefault();
+      const det = document.getElementById(tog.getAttribute('data-det'));
+      if (det) {
+        const open = det.style.display !== 'none';
+        det.style.display = open ? 'none' : 'block';
+        tog.textContent = open ? 'show details' : 'hide details';
+      }
+    };
+  }
+
+  if (target) {
+    if (!target.querySelector('.tc-body')) {
+      const body = document.createElement('div'); body.className = 'tc-body';
+      target.appendChild(body);
+    }
+    target.querySelector('.tc-body').insertAdjacentHTML('beforeend', bodyHtml);
+    target.parentElement.dataset.pending = '0';
+    const stateEl = target.querySelector('.tc-state');
+    if (stateEl) {
+      stateEl.textContent = opts.error ? 'failed' : 'done';
+      stateEl.classList.remove('running');
+      stateEl.classList.add(opts.error ? 'err' : 'ok');
+    }
+    wireToggle(target);
+  } else {
+    const d = document.createElement('div');
+    d.className = 'msg tool';
+    const badge = opts.isKB ? 'kb' : 'gen';
+    const icon = opts.isKB ? '📚' : '🧬';
+    d.innerHTML = '<div class="role">Tool result</div>' +
+      '<div class="tool-card"><div class="tc-head"><span class="badge ' + badge + '">' + icon + '</span> ' +
+      '<span class="tc-summary">' + esc(name) + '</span> ' +
+      '<span class="tc-state ' + (opts.error?'err':'ok') + '">' + (opts.error?'failed':'done') + '</span></div>' +
+      '<div class="tc-body">' + bodyHtml + '</div></div>';
+    $('messages').appendChild(d);
+    wireToggle(d);
+  }
+  scrollMessages();
+}
+function kbSourcesHtml(sources, meta) {
+  const links = (sources||[]).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join('');
+  const metaLine = meta ? `<div class="kb-meta">model: ${esc(meta.model||'—')} · cost: $${(meta.cost||0).toFixed(5)} · ${meta.ms||0}ms</div>` : '';
+  return `<div class="kb-sources"><div class="src-title">Sources</div>${links}</div>${metaLine}`;
+}
+function showThinking(on) {
+  let t = $('thinking-indicator');
+  if (on) {
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'thinking-indicator';
+      t.className = 'msg assistant';
+      t.innerHTML = `<div class="role">Assistant</div><div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div>`;
+      $('messages').appendChild(t);
+    }
+    scrollMessages();
+  } else if (t) {
+    t.remove();
+  }
+}
+function scrollMessages() {
+  const m = $('messages'); setTimeout(() => { m.scrollTop = m.scrollHeight; }, 30);
+}
+function addStopButton() {
+  const bar = document.querySelector('.comp-bar');
+  if ($('stop-btn')) return;
+  const s = document.createElement('button'); s.id='stop-btn'; s.className='stop'; s.textContent='Stop';
+  s.onclick = () => { state.abort = true; toast('Stopping after current step…'); };
+  bar.appendChild(s);
+}
+function removeStopButton() { const s = $('stop-btn'); if (s) s.remove(); }
+
+/* KB side panel */
+function addKBEntry(question, r) {
+  const body = $('kb-body');
+  const empty = body.querySelector('.kb-empty'); if (empty) empty.remove();
+  const d = document.createElement('div');
+  d.className = 'kb-q';
+  const links = (r.sources||[]).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title||s.url)}</a>`).join('');
+  d.innerHTML = `<div class="kq-q">${esc(question)}</div>
+    <div class="kq-a">${mdToHtml(r.answer||'(no answer)')}</div>
+    <div class="kq-src">${links}</div>`;
+  body.appendChild(d);
+  body.scrollTop = body.scrollHeight;
+}
+
+/* ============================================================
+   CONNECT FLOW
+   ============================================================ */
+async function doConnect() {
+  const url = $('gen-url').value.trim();
+  const token = $('gen-token').value.trim();
+  const orKey = $('or-key').value.trim();
+  const kbKey = $('kb-key').value.trim();
+  const store = $('store-toggle').checked;
+  $('conn-err').textContent = '';
+
+  if (!url || !token) { $('conn-err').textContent = 'Genesis MCP URL and token are required.'; return; }
+  if (!orKey) { $('conn-err').textContent = 'OpenRouter API key is required.'; return; }
+  if (!/^https:\/\/genesis\.estage\.com\/api\/agent\/\d+\/mcp/.test(url)) {
+    $('conn-err').textContent = 'Genesis URL should look like https://genesis.estage.com/api/agent/<id>/mcp';
+    return;
+  }
+
+  const btn = $('connect-btn'); btn.disabled = true;
+  setConnStatus('connecting…', 'busy');
+
+  // global safety net: if anything stalls > 45s, reset to failed
+  const safety = setTimeout(() => {
+    if (btn.disabled) {
+      setConnStatus('failed', 'err');
+      $('conn-err').textContent = 'Connection timed out after 45s. This is usually a stale cached page — hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) and try again.';
+      btn.disabled = false;
+      toast('Connection timed out — hard-refresh the page and retry.', 'err');
+    }
+  }, 45000);
+
+  // store toggle (wrapped — localStorage can throw in sandboxed iframes)
+  try {
+    if (store) {
+      localStorage.setItem('gab_creds', JSON.stringify({ url, token, orKey, kbKey }));
+    } else {
+      localStorage.removeItem('gab_creds');
+    }
+  } catch(e) {
+    // localStorage unavailable (sandboxed origin) — silently skip; not fatal
+  }
+
+  try {
+    // 1. OpenRouter models (validates OR key implicitly via fetch; /models is public so also probe chat key shape)
+    setConnStatus('fetching OpenRouter models…', 'busy');
+    const models = await OpenRouter.fetchModels(orKey);
+    if (!models.length) throw new Error('No function-calling-capable models found on OpenRouter.');
+    // default to GLM 5.2 if present, else first model
+    const defaultId = models.find(m => m.id === 'z-ai/glm-5.2') ? 'z-ai/glm-5.2' : models[0].id;
+    state.or = { key: orKey, models, modelId: defaultId };
+
+    // 2. Genesis
+    setConnStatus('connecting to Genesis…', 'busy');
+    await Genesis.init(url, token);
+
+    // 3. KB (optional)
+    if (kbKey) {
+      setConnStatus('checking KB…', 'busy');
+      try {
+        state.kb = { key: kbKey, ok: false };
+        await KB.health(); // health is public; real auth tested on first ask
+        state.kb.ok = true;
+        $('kb-status').textContent = 'ready';
+        $('kb-status').style.color = 'var(--ok)';
+      } catch(e) {
+        state.kb = null;
+        $('kb-status').textContent = 'unavailable';
+        $('kb-status').style.color = 'var(--err)';
+        toast(`KB health failed: ${e.message}. KB features disabled.`, 'err');
+      }
+    } else {
+      state.kb = null;
+      $('kb-status').textContent = 'no key (disabled)';
+      $('kb-status').style.color = 'var(--dim)';
+      const form = $('kb-form'); form.innerHTML = `<div class="kb-disabled">No KB key provided.<br>Disconnect and add a pk_live_… key to enable KB queries.</div>`;
+    }
+
+    setConnStatus('connected', 'ok');
+    toast('Connected ✦', 'ok');
+    clearTimeout(safety);
+    enterApp();
+  } catch(e) {
+    clearTimeout(safety);
+    setConnStatus('failed', 'err');
+    $('conn-err').textContent = e.message;
+    toast(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function enterApp() {
+  // populate model picker — grouped: Recommended (strong agent families) then All capable
+  const sel = $('model');
+  sel.innerHTML = '';
+  const recModels = state.or.models.filter(m => m._group === 'Recommended');
+  const restModels = state.or.models.filter(m => m._group !== 'Recommended');
+  function addOptions(models, groupLabel) {
+    if (!models.length) return;
+    const og = document.createElement('optgroup');
+    og.label = groupLabel;
+    for (const m of models) {
+      const o = document.createElement('option');
+      o.value = m.id;
+      const ctxK = Math.round((m.context_length || 0) / 1000);
+      const price = m.pricing && parseFloat(m.pricing.prompt || 0);
+      const priceStr = price ? `$${(price * 1e6).toFixed(2)}/M` : '—';
+      o.textContent = `${m.name || m.id} — ${ctxK}k ctx · ${priceStr}`;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  addOptions(recModels, '★ Recommended (strong agent models)');
+  addOptions(restModels, 'All capable models');
+  sel.value = state.or.modelId;
+  sel.onchange = () => { state.or.modelId = sel.value; toast(`Model: ${sel.value}`); };
+
+  // project info
+  $('proj-id').textContent = state.gen.projectId || '?';
+  $('proj-info').title = state.gen.url;
+
+  // tools modal
+  $('tools-count').textContent = state.gen.tools.length;
+  const tl = $('tools-list'); tl.innerHTML = '';
+  state.gen.tools.forEach(t => {
+    const d = document.createElement('div');
+    d.className = 'tool-item';
+    d.innerHTML = `<b>${esc(t.name)}</b><div class="desc">${esc((t.description||'').split('\n')[0].slice(0,180))}</div>`;
+    tl.appendChild(d);
+  });
+
+  // fetch genesis_context
+  $('ctx-strip').textContent = 'Loading project context…';
+  try {
+    const ctx = await Genesis.callTool('genesis_context', {});
+    state.gen.context = ctx;
+    const short = ctx.split('\n').slice(0,2).join(' · ').slice(0,180);
+    $('ctx-strip').innerHTML = `<b>context loaded</b> — ${esc(short)}… <span style="color:var(--accent2);cursor:pointer;text-decoration:underline" id="ctx-open">view full</span>`;
+    $('ctx-list').textContent = ctx;
+    $('ctx-open').onclick = () => $('ctx-modal').classList.add('active');
+  } catch(e) {
+    $('ctx-strip').innerHTML = `<span style="color:var(--warn)">context load failed: ${esc(e.message)}</span>`;
+  }
+
+  // welcome message
+  $('messages').innerHTML = '';
+  addAssistantRaw(`Connected to Genesis project ${state.gen.projectId}. ${state.gen.tools.length} tools available.${state.kb ? " KB is enabled — I will verify uncertain writes against the eStage knowledge base." : " KB is disabled (no key)."}\n\nTell me what you want to build or change. I will read context, make edits through Genesis tools, and check preview logs before suggesting publish.`);
+  // seed system + context into state.messages so the first turn doesn't re-fetch
+  state.messages = [
+    { role:'system', _sys:true, content: buildSystemPrompt() },
+  ];
+  if (state.gen.context) state.messages.push({ role:'system', _ctx:true, content: `genesis_context result for this project:\n\n${state.gen.context}` });
+
+  $('connect-screen').style.display = 'none';
+  $('app').classList.add('active');
+  $('composer').focus();
+}
+
+function addAssistantRaw(text) {
+  const d = document.createElement('div');
+  d.className = 'msg assistant';
+  d.innerHTML = `<div class="role">Assistant</div><div class="bubble">${mdToHtml(text)}</div>`;
+  $('messages').appendChild(d); scrollMessages();
+}
+
+/* ============================================================
+   KB PANEL INTERACTION
+   ============================================================ */
+async function kbAsk() {
+  if (!state.kb) { toast('No KB key connected.', 'err'); return; }
+  const q = $('kb-input').value.trim();
+  if (!q) return;
+  $('kb-send').disabled = true; $('kb-input').value = '';
+  const body = $('kb-body');
+  const empty = body.querySelector('.kb-empty'); if (empty) empty.remove();
+  // placeholder
+  const ph = document.createElement('div');
+  ph.className = 'kb-q';
+  ph.innerHTML = `<div class="kq-q">${esc(q)}</div><div class="kq-a" style="color:var(--dim)">querying…</div>`;
+  body.appendChild(ph);
+  try {
+    const r = await KB.ask(q, { topK: 5 });
+    ph.remove();
+    addKBEntry(q, r);
+  } catch(e) {
+    ph.querySelector('.kq-a').textContent = `Error: ${e.message}`;
+    ph.querySelector('.kq-a').style.color = 'var(--err)';
+    toast(`KB query failed: ${e.message}`, 'err');
+  } finally {
+    $('kb-send').disabled = false;
+  }
+}
+
+/* ============================================================
+   WIRING
+   ============================================================ */
+$('connect-btn').onclick = doConnect;
+
+/* ---- Load credentials from a local file (never uploaded anywhere) ---- */
+$('load-file-btn').onclick = () => $('creds-file').click();
+$('creds-file').onchange = async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  $('conn-err').textContent = '';
+  try {
+    const text = await file.text();
+    const creds = parseCredsFile(text, file.name);
+    if (creds.genesis_url) $('gen-url').value = creds.genesis_url;
+    if (creds.genesis_token) $('gen-token').value = creds.genesis_token;
+    if (creds.openrouter_key) $('or-key').value = creds.openrouter_key;
+    if (creds.kb_key) $('kb-key').value = creds.kb_key;
+    toast(`Loaded ${file.name} — filled ${[creds.genesis_url,creds.genesis_token,creds.openrouter_key,creds.kb_key].filter(Boolean).length}/4 fields`, 'ok');
+  } catch(e) {
+    $('conn-err').textContent = `Could not parse ${file.name}: ${e.message}`;
+    toast(`File parse error: ${e.message}`, 'err');
+  } finally {
+    ev.target.value = ''; // allow re-selecting the same file
+  }
+};
+
+/* Parse JSON, .env, or key:value / CSV formats into the 4 canonical keys */
+function parseCredsFile(text, filename) {
+  const lower = String(filename||'').toLowerCase();
+  const out = {};
+  // 1) JSON object
+  if (lower.endsWith('.json') || (text.trim().startsWith('{') && text.trim().endsWith('}'))) {
+    let j; try { j = JSON.parse(text); } catch(e) { throw new Error('invalid JSON'); }
+    const get = (...keys) => { for (const k of keys) if (j[k] != null && j[k] !== '') return String(j[k]); return null; };
+    out.genesis_url = get('genesis_url','gen_url','genesis_mcp_url','mcp_url','url');
+    out.genesis_token = get('genesis_token','gen_token','agent_token','x_agent_token','token');
+    out.openrouter_key = get('openrouter_key','or_key','openrouter_api_key','openrouter');
+    out.kb_key = get('kb_key','estage_kb_key','estage_kb_api_key','kb_api_key','kb');
+    return out;
+  }
+  // 2) .env / KEY=VALUE / key:value lines (handles both .env and freeform text)
+  const lines = text.split(/\r?\n/);
+  const map = {};
+  for (let raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+    // KEY=VALUE or KEY:VALUE or "KEY"="VALUE"
+    let m = line.match(/^([A-Za-z_][\w\- ]*?)\s*[=:]\s*(.*)$/);
+    if (m) {
+      let k = m[1].trim().toLowerCase().replace(/\s+/g,'_');
+      let v = m[2].trim().replace(/^["']|["']$/g, '');
+      if (v) map[k] = v;
+    }
+  }
+  const find = (...keys) => { for (const k of keys) if (map[k]) return map[k]; return null; };
+  out.genesis_url = find('genesis_url','gen_url','genesis_mcp_url','mcp_url','url');
+  out.genesis_token = find('genesis_token','gen_token','agent_token','x_agent_token','token');
+  out.openrouter_key = find('openrouter_key','or_key','openrouter_api_key','openrouter');
+  out.kb_key = find('kb_key','estage_kb_key','estage_kb_api_key','kb_api_key','kb');
+  if (!Object.keys(out).length) throw new Error('no recognized key=value lines found');
+  return out;
+}
+
+/* ---- Download a template file (.txt — easy to find and edit) ---- */
+const TEMPLATE_TEXT = `# Genesis AI Builder — credentials
+# Fill in your 4 values, save this file, then use "Load from file" in the app.
+# Lines starting with # are comments. The file is read only in your browser.
+
+genesis_url = https://genesis.estage.com/api/agent/75572/mcp
+genesis_token = PASTE_YOUR_ONE_TIME_TOKEN_HERE
+openrouter_key = sk-or-...
+kb_key = pk_live_...
+`;
+
+$('dl-template').onclick = (ev) => {
+  ev.preventDefault();
+  const blob = new Blob([TEMPLATE_TEXT], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'genesis-builder-creds.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('Template downloaded (.txt) — fill in your 4 values and save it.', 'ok');
+};
+
+/* ---- Copy template to clipboard ---- */
+$('copy-template').onclick = async (ev) => {
+  ev.preventDefault();
+  try {
+    await navigator.clipboard.writeText(TEMPLATE_TEXT);
+    toast('Template copied to clipboard — paste into any text editor.', 'ok');
+  } catch(e) {
+    // fallback for browsers/contexts without async clipboard
+    const ta = document.createElement('textarea');
+    ta.value = TEMPLATE_TEXT; ta.style.position='fixed'; ta.style.top='-1000px';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('Template copied to clipboard.', 'ok'); }
+    catch(e2) { toast('Copy failed — your browser blocked it.', 'err'); }
+    ta.remove();
+  }
+};
+
+$('send-btn').onclick = () => {
+  const t = $('composer').value.trim();
+  if (!t || state.busy) return;
+  $('composer').value = '';
+  autoGrow();
+  runAgent(t);
+};
+$('composer').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('send-btn').click(); }
+});
+$('composer').addEventListener('input', autoGrow);
+function autoGrow() {
+  const t = $('composer'); t.style.height = '74px';
+  t.style.height = Math.min(200, t.scrollHeight) + 'px';
+}
+$('kb-send').onclick = kbAsk;
+$('kb-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); kbAsk(); }
+});
+
+$('tools-btn').onclick = () => $('tools-modal').classList.add('active');
+$('context-btn').onclick = () => $('ctx-modal').classList.add('active');
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => $(b.dataset.close).classList.remove('active'));
+document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('active'); }));
+
+$('reset-btn').onclick = () => {
+  if (!confirm('Disconnect? Keys are cleared from memory.')) return;
+  state.gen = state.or = state.kb = null;
+  state.messages = [];
+  state.cost = 0;
+  updateCostBadge();
+  try { localStorage.removeItem('gab_creds'); } catch(e) {}
+  $('app').classList.remove('active');
+  $('connect-screen').style.display = 'flex';
+  $('gen-url').value = $('gen-token').value = $('or-key').value = $('kb-key').value = '';
+  setConnStatus('not connected');
+  $('conn-err').textContent = '';
+};
+
+/* restore saved creds on load */
+(function restore() {
+  try {
+    const s = localStorage.getItem('gab_creds');
+    if (s) {
+      const c = JSON.parse(s);
+      $('gen-url').value = c.url || '';
+      $('gen-token').value = c.token || '';
+      $('or-key').value = c.orKey || '';
+      $('kb-key').value = c.kbKey || '';
+      $('store-toggle').checked = true;
+    }
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>
