@@ -1,0 +1,476 @@
+/**
+ * Server-side agent loop (V2 — the core of GenWhisperer).
+ *
+ * Ports the v12 runAgent() loop to a server runtime. The Express agent route
+ * calls runAgentLoop(); it:
+ *   1. Connects a GenesisMcpClient to the user's project (token decrypted
+ *      server-side, never sent to the browser), discovers the live tool set.
+ *   2. Builds the V2 system prompt (with live tool names) + the OpenRouter
+ *      function-tool schema (Genesis tools + estage_kb_query).
+ *   3. Seeds genesis_context once, appends the user message.
+ *   4. Loops (max 14 iters): call OpenRouter (non-streaming, with tools) →
+ *      if the model returns tool_calls, execute each (Genesis via MCP, or KB),
+ *      feeding results back as role:'tool' messages, then re-prompt; else
+ *      emit the final answer and stop.
+ *   5. Emits SSE events to the browser: narration (assistant text), status
+ *      (running <tool>), tool_approval_request (high-impact ops — the loop
+ *      PAUSES until the browser POSTs /approve/:gateId), final_answer, error,
+ *      done. Tool execution is silent — the chat shows narration + final
+ *      answer only (per the v12 decision).
+ *   6. Computes per-turn cost from usage × model pricing; persists each turn
+ *      to history (conversations + messages).
+ *
+ * Credentials are passed in by the caller and never persisted here.
+ */
+
+import { GenesisMcpClient, type McpTool } from "./genesisMcp.js";
+import {
+  chat as orChat,
+  computeCost,
+  fetchModels,
+  type ChatMessage,
+  type OrModel,
+  type OrTool,
+} from "./openrouter.js";
+import { kbAsk } from "./estageKb.js";
+import { genesisToolsToOrTools, needsConfirmation } from "../config/genesisTools.js";
+import { buildSystemPrompt } from "../config/systemPrompt.js";
+import {
+  appendMessage,
+  createConversation,
+  loadHistory,
+  touchConversation,
+} from "./history.js";
+
+const MAX_ITERATIONS = 14;
+
+/** SSE event the loop emits to the browser. */
+export type AgentEvent =
+  | { type: "status"; text: string }
+  | { type: "narration"; text: string }
+  | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
+  | { type: "tool_approval_resolved"; gateId: string; approved: boolean }
+  | { type: "kb_answer"; question: string; answer: string; sources: Array<{ title?: string; url?: string }> }
+  | { type: "final_answer"; text: string }
+  | { type: "cost"; totalUsd: number }
+  | { type: "conversation"; id: number }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+/** A sink that receives SSE events. The route implements this. */
+export interface AgentSink {
+  emit(ev: AgentEvent): void;
+  /** Returns true if the client has disconnected (stop streaming). */
+  closed(): boolean;
+}
+
+/** Pending write-confirmation gate — resolved by POST /api/agent/approve/:gateId. */
+interface PendingGate {
+  resolve: (approved: boolean) => void;
+  reject: (err: Error) => void;
+  tool: string;
+  args: Record<string, unknown>;
+  createdAt: number;
+}
+
+/** In-memory registry of pending approval gates, keyed by gateId. */
+const pendingGates = new Map<string, PendingGate>();
+
+/** Resolve a pending approval gate (called by the /approve route). */
+export function resolveGate(gateId: string, approved: boolean): boolean {
+  const g = pendingGates.get(gateId);
+  if (!g) return false;
+  pendingGates.delete(gateId);
+  g.resolve(approved);
+  return true;
+}
+
+/** Cancel all pending gates for a run (called if the client disconnects). */
+export function cancelGatesFor(gateIds: string[]): void {
+  for (const id of gateIds) {
+    const g = pendingGates.get(id);
+    if (g) {
+      pendingGates.delete(id);
+      g.reject(new Error("Client disconnected"));
+    }
+  }
+}
+
+/** The credentials + context needed to run the loop. */
+export interface AgentRunInput {
+  userId: number;
+  /** Existing conversation id to resume, or null to create a new one. */
+  conversationId: number | null;
+  genesisProjectId: number;
+  /** Genesis MCP URL + decrypted one-time token (server-side only). */
+  mcpUrl: string;
+  genesisToken: string;
+  /** Tenant's decrypted OpenRouter key (server-side only). */
+  openrouterKey: string;
+  model: string;
+  /** The user's new message for this turn. */
+  userMessage: string;
+  /** Optional: a pre-fetched genesis_context to seed (avoids re-fetch). */
+  seededContext?: string | null;
+}
+
+/** Result summary of a run (for logging / AITable). */
+export interface AgentRunResult {
+  conversationId: number;
+  finalAnswer: string;
+  totalCostUsd: number;
+  iterations: number;
+  toolCalls: number;
+  stopped: boolean;
+  error: string | null;
+}
+
+/**
+ * Run the agent loop. Streams SSE events to the sink. Persists history.
+ * Never throws — errors are emitted as { type: 'error' } then { type: 'done' }.
+ */
+export async function runAgentLoop(
+  input: AgentRunInput,
+  sink: AgentSink
+): Promise<AgentRunResult> {
+  const gateIds: string[] = [];
+  let totalCost = 0;
+  let iterations = 0;
+  let toolCallCount = 0;
+  let stopped = false;
+  let errorMessage: string | null = null;
+  let finalAnswer = "";
+  let conversationId = input.conversationId;
+
+  // Buffer the assistant narration + tool_calls for history persistence.
+  let assistantBuffer = "";
+  let assistantToolCalls: unknown = null;
+
+  const safeEmit = (ev: AgentEvent) => {
+    if (!sink.closed()) sink.emit(ev);
+  };
+
+  try {
+    // ── 1. Connect to Genesis + discover the live tool set ──────────────────
+    safeEmit({ type: "status", text: "Connecting to Genesis…" });
+    const mcp = new GenesisMcpClient(input.mcpUrl, input.genesisToken);
+    let genesisTools: McpTool[] = [];
+    try {
+      genesisTools = await mcp.listTools();
+    } catch (e) {
+      const err = e as Error & { code?: number };
+      if (err.code === 401) {
+        throw new Error(
+          "Genesis token invalid or already consumed. Generate a fresh one-time token in " +
+            "Genesis > Integrations > Claude Code and update this project."
+        );
+      }
+      throw new Error(`Could not connect to Genesis: ${err.message}`);
+    }
+    if (!genesisTools.length) {
+      throw new Error("Connected, but Genesis exposed no tools. Check the project integration.");
+    }
+
+    // ── 2. Build the system prompt + tool schema ────────────────────────────
+    const systemPrompt = buildSystemPrompt(genesisTools);
+    const tools: OrTool[] = genesisToolsToOrTools(genesisTools);
+
+    // ── 3. Assemble the message history ─────────────────────────────────────
+    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
+
+    // Seed genesis_context once (either pre-fetched or fetch it now).
+    let contextText = input.seededContext ?? null;
+    if (!contextText) {
+      // Try to read genesis_context if the project exposes it.
+      if (genesisTools.some((t) => t.name === "genesis_context")) {
+        safeEmit({ type: "status", text: "Reading project context…" });
+        try {
+          const ctx = await mcp.callTool("genesis_context", {});
+          contextText = ctx.text;
+        } catch {
+          /* non-fatal — the model can fetch it itself */
+        }
+      }
+    }
+    if (contextText) {
+      messages.push({
+        role: "system",
+        content: `genesis_context result for this project:\n\n${contextText}`,
+      });
+    }
+
+    // Create / resume the conversation.
+    if (!conversationId) {
+      conversationId = await createConversation({
+        userId: input.userId,
+        genesisProjectId: input.genesisProjectId,
+        model: input.model,
+        firstUserMessage: input.userMessage,
+      });
+      safeEmit({ type: "conversation", id: conversationId });
+    } else {
+      // Replay persisted history into the message array.
+      const history = await loadHistory(conversationId);
+      for (const m of history) {
+        // Skip the persisted system messages — we rebuilt them above.
+        if (m.role === "system") continue;
+        messages.push({
+          role: m.role,
+          content: m.content,
+          ...(m.toolCalls
+            ? { tool_calls: m.toolCalls as ChatMessage["tool_calls"] }
+            : {}),
+        });
+      }
+    }
+
+    // Append the new user message.
+    messages.push({ role: "user", content: input.userMessage });
+    await appendMessage({
+      conversationId: conversationId as number,
+      role: "user",
+      content: input.userMessage,
+    });
+
+    // Look up the model's pricing for cost computation.
+    let modelPricing: OrModel | undefined;
+    try {
+      const models = await fetchModels(input.openrouterKey);
+      modelPricing = models.find((m) => m.id === input.model);
+    } catch {
+      /* non-fatal — cost will be 0 if pricing can't be resolved */
+    }
+
+    // ── 4. The loop ─────────────────────────────────────────────────────────
+    while (iterations++ < MAX_ITERATIONS) {
+      if (sink.closed()) {
+        stopped = true;
+        break;
+      }
+      safeEmit({ type: "status", text: "Thinking…" });
+
+      let resp;
+      try {
+        resp = await orChat({
+          apiKey: input.openrouterKey,
+          model: input.model,
+          messages,
+          tools,
+        });
+      } catch (e) {
+        const err = e as Error & { name?: string };
+        if (err.name === "AbortError" || sink.closed()) {
+          stopped = true;
+          break;
+        }
+        throw new Error(`OpenRouter error: ${err.message}`);
+      }
+
+      // Accumulate cost.
+      if (resp.usage) {
+        const c = computeCost(resp.usage, modelPricing);
+        totalCost += c;
+        safeEmit({ type: "cost", totalUsd: totalCost });
+      }
+
+      const choice = resp.choices?.[0];
+      if (!choice || !choice.message) {
+        throw new Error("No choice in OpenRouter response.");
+      }
+      const msg = choice.message;
+      const assistantRecord: ChatMessage = {
+        role: "assistant",
+        content: msg.content || "",
+        ...(msg.tool_calls ? { tool_calls: msg.tool_calls } : {}),
+      };
+      messages.push(assistantRecord);
+      assistantBuffer = msg.content || "";
+      assistantToolCalls = msg.tool_calls || null;
+
+      if (msg.tool_calls && msg.tool_calls.length) {
+        // Optional preamble narration.
+        if (msg.content) safeEmit({ type: "narration", text: msg.content });
+
+        // Persist the assistant turn (with tool_calls) before executing them.
+        await appendMessage({
+          conversationId: conversationId as number,
+          role: "assistant",
+          content: assistantBuffer,
+          toolCalls: assistantToolCalls,
+          promptTokens: resp.usage?.prompt_tokens,
+          completionTokens: resp.usage?.completion_tokens,
+          costUsd: totalCost, // running cost up to this turn
+        });
+
+        // Execute each tool call.
+        for (const tc of msg.tool_calls) {
+          if (sink.closed()) {
+            stopped = true;
+            break;
+          }
+          const fn = tc.function;
+          let args: Record<string, unknown> = {};
+          try {
+            args = fn.arguments ? JSON.parse(fn.arguments) : {};
+          } catch {
+            args = {};
+          }
+          toolCallCount += 1;
+          safeEmit({ type: "status", text: `Running: ${fn.name}` });
+
+          const resultText = await executeToolCall(
+            fn.name,
+            args,
+            tc.id,
+            mcp,
+            sink,
+            gateIds
+          );
+
+          // Feed the result back to the model as a tool message.
+          messages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            name: fn.name,
+            content: resultText,
+          });
+          // Persist the tool result message (conversationId is set by now).
+          await appendMessage({
+            conversationId: conversationId as number,
+            role: "tool",
+            content: resultText,
+          });
+        }
+        if (sink.closed()) {
+          stopped = true;
+          break;
+        }
+        continue; // loop again so the model sees the tool results
+      } else {
+        // Final answer.
+        finalAnswer = msg.content || "(no content)";
+        safeEmit({ type: "final_answer", text: finalAnswer });
+        // Persist the final assistant turn.
+        await appendMessage({
+          conversationId: conversationId as number,
+          role: "assistant",
+          content: finalAnswer,
+          promptTokens: resp.usage?.prompt_tokens,
+          completionTokens: resp.usage?.completion_tokens,
+          costUsd: totalCost,
+        });
+        await touchConversation(conversationId as number);
+        break;
+      }
+    }
+
+    if (iterations > MAX_ITERATIONS && !stopped && !finalAnswer) {
+      errorMessage =
+        "Reached the max tool-call iteration limit. Ask me to continue or narrow the task.";
+      safeEmit({ type: "narration", text: errorMessage });
+    }
+  } catch (e) {
+    errorMessage = (e as Error).message;
+    safeEmit({ type: "error", message: errorMessage });
+  } finally {
+    // Cancel any unresolved approval gates so they don't leak.
+    cancelGatesFor(gateIds);
+    safeEmit({ type: "done" });
+  }
+
+  return {
+    conversationId: conversationId as number,
+    finalAnswer,
+    totalCostUsd: totalCost,
+    iterations,
+    toolCalls: toolCallCount,
+    stopped,
+    error: errorMessage,
+  };
+}
+
+/**
+ * Execute a single tool call (Genesis or KB), honoring the write-confirmation
+ * gate for high-impact ops. Returns the result text to feed back to the model.
+ */
+async function executeToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  toolCallId: string,
+  mcp: GenesisMcpClient,
+  sink: AgentSink,
+  gateIds: string[]
+): Promise<string> {
+  const isKB = name === "estage_kb_query";
+
+  // ── Confirmation gate for high-impact Genesis writes ─────────────────────
+  if (!isKB && needsConfirmation(name, args)) {
+    const gateId = `${toolCallId}:${Date.now()}`;
+    gateIds.push(gateId);
+    if (!sink.closed()) {
+      sink.emit({ type: "tool_approval_request", gateId, tool: name, args });
+    }
+    let approved = false;
+    try {
+      approved = await new Promise<boolean>((resolve, reject) => {
+        pendingGates.set(gateId, {
+          resolve,
+          reject,
+          tool: name,
+          args,
+          createdAt: Date.now(),
+        });
+      });
+    } catch {
+      return "User disconnected before approving this operation.";
+    }
+    if (!sink.closed()) sink.emit({ type: "tool_approval_resolved", gateId, approved });
+    if (!approved) {
+      return "User denied this write operation.";
+    }
+  }
+
+  // ── Execute ──────────────────────────────────────────────────────────────
+  if (isKB) {
+    try {
+      const r = await kbAsk(String(args.question || ""), {
+        topK: typeof args.top_k === "number" ? args.top_k : 5,
+      });
+      // Surface KB answers in the side panel (separate from chat).
+      if (!sink.closed()) {
+        sink.emit({
+          type: "kb_answer",
+          question: String(args.question || ""),
+          answer: r.answer || "(no answer)",
+          sources: r.sources || [],
+        });
+      }
+      return r.answer || "(no answer)";
+    } catch (e) {
+      return `KB query failed: ${(e as Error).message}`;
+    }
+  }
+
+  try {
+    const result = await mcp.callTool(name, args);
+    return result.text;
+  } catch (e) {
+    const err = e as Error & { toolError?: boolean; code?: number };
+    return err.toolError ? err.message : `Tool error: ${err.message}`;
+  }
+}
+
+/**
+ * Approximate transcript for AITable logging (reconstructed from the run).
+ * The route can call logSessionToAITable with this after the stream ends.
+ */
+export function buildTranscript(
+  input: AgentRunInput,
+  result: AgentRunResult
+): { initialPrompt: string; finalPrompt: string; transcript: string } {
+  return {
+    initialPrompt: input.userMessage,
+    finalPrompt: result.finalAnswer,
+    transcript: `User: ${input.userMessage}\n\nAssistant: ${result.finalAnswer}`,
+  };
+}

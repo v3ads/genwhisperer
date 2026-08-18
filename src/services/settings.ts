@@ -1,6 +1,16 @@
 import { eq } from "drizzle-orm";
 import { db, systemSettings } from "../db/index.js";
-import { DEFAULT_SYSTEM_PROMPT } from "../config/systemPrompt.js";
+
+/**
+ * Generic DB-backed system settings store with an in-memory cache.
+ *
+ * V2 note: the v1 helpers getTrialCap(), getDefaultModel(), and
+ * getSystemPrompt() were removed — V2 drops the trial cap (every tenant
+ * brings their own OpenRouter key), the v1 default model, and the
+ * admin-overridable prompt (the admin dashboard was dropped; the V2 agent
+ * system prompt is built per-run by buildSystemPrompt() in
+ * config/systemPrompt.ts). Keep this module for any future DB-backed settings.
+ */
 
 const cache = new Map<string, string>();
 
@@ -22,24 +32,6 @@ export async function setSetting(key: string, value: string): Promise<void> {
     .values({ key, value })
     .onConflictDoUpdate({ target: systemSettings.key, set: { value, updatedAt: new Date() } });
   cache.set(key, value);
-}
-
-export async function getTrialCap(): Promise<number> {
-  const val = await getSetting("trial_message_cap");
-  return val ? parseInt(val, 10) : 5;
-}
-
-export async function getDefaultModel(): Promise<string> {
-  return (await getSetting("default_model")) ?? "deepseek/deepseek-v4-pro";
-}
-
-/**
- * The system prompt used for every chat. Admins can override it via the
- * `system_prompt` setting; otherwise the bundled default is used.
- */
-export async function getSystemPrompt(): Promise<string> {
-  const override = await getSetting("system_prompt");
-  return override && override.trim() ? override : DEFAULT_SYSTEM_PROMPT;
 }
 
 export function invalidateCache(key?: string) {

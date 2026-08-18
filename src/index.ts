@@ -10,9 +10,9 @@ import rateLimit from "express-rate-limit";
 import compression from "compression";
 
 import authRouter from "./routes/auth.js";
-import chatRouter from "./routes/chat.js";
-import accountRouter from "./routes/account.js";
-import adminRouter from "./routes/admin.js";
+import profileRouter from "./routes/profile.js";
+import projectsRouter from "./routes/projects.js";
+import agentRouter from "./routes/agent.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 
@@ -79,13 +79,13 @@ app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Apply gzip compression to everything EXCEPT the SSE chat endpoint.
+// Apply gzip compression to everything EXCEPT the SSE agent endpoint.
 // The SSE route must not be compressed — compression buffers chunks which
-// breaks token-by-token streaming.
+// breaks the agent-loop event stream.
 app.use(
   compression({
     filter: (req, res) => {
-      if (req.path === "/api/chat/message") return false;
+      if (req.path === "/api/agent/message") return false;
       return compression.filter(req, res);
     },
   })
@@ -113,9 +113,12 @@ const chatLimiter = rateLimit({
 app.use("/api", csrfOriginGuard(ALLOWED_ORIGINS));
 
 app.use("/api/auth", authLimiter, authRouter);
-app.use("/api/chat", chatLimiter, chatRouter);
-app.use("/api/account", accountRouter);
-app.use("/api/admin", adminRouter);
+app.use("/api/profile", profileRouter);
+app.use("/api/projects", projectsRouter);
+// The agent /message endpoint is SSE + runs an AI loop, so it gets the
+// stricter chat limiter (30/min). The other agent sub-routes (conversations,
+// kb-query, approve) are plain JSON and don't need it.
+app.use("/api/agent", chatLimiter, agentRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
@@ -159,8 +162,8 @@ app.use(
 
 // ─── SPA fallback ─────────────────────────────────────────────────────────────
 // Any GET that is not /api/* and does not match a static file returns
-// index.html so client-side routes (/chat, /account, /admin, /auth/verify)
-// work on hard refresh.
+// index.html so client-side routes (/builder, /profile, /projects,
+// /conversations, /auth/verify) work on hard refresh.
 app.get("*", (req, res, next) => {
   // Don't let the SPA fallback shadow API routes or static asset requests.
   // Anything under /api or any path with a file extension should 404 if not matched.
