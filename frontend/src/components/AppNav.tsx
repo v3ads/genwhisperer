@@ -12,11 +12,12 @@ export function AppNav() {
   const loc = useLocation();
   const { user, logout } = useAuth();
 
-  const links: Array<{ to: string; label: string; match: string }> = [
+  const links: Array<{ to: string; label: string; match: string; adminOnly?: boolean }> = [
     { to: "/builder", label: "Builder", match: "/builder" },
     { to: "/conversations", label: "History", match: "/conversations" },
     { to: "/projects", label: "Projects", match: "/projects" },
     { to: "/profile", label: "Profile", match: "/profile" },
+    { to: "/admin", label: "Admin", match: "/admin", adminOnly: true },
   ];
 
   const isActive = (m: string) => loc.pathname === m || loc.pathname.startsWith(m + "/");
@@ -26,11 +27,13 @@ export function AppNav() {
       <Brand large />
       <div className="sp" />
       <div className="links">
-        {links.map((l) => (
-          <a key={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => nav(l.to)}>
-            {l.label}
-          </a>
-        ))}
+        {links
+          .filter((l) => !l.adminOnly || user?.role === "admin")
+          .map((l) => (
+            <a key={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => nav(l.to)}>
+              {l.label}
+            </a>
+          ))}
       </div>
       {user && <span className="user-chip" title={user.email}>{user.email}</span>}
       <button

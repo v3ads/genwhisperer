@@ -1,0 +1,113 @@
+/* ===========================================================================
+   GenWhisperer V2 — Admin dashboard
+   Master-detail: users list (left) → selected user's projects + conversations
+   (right) → conversation reader (full messages). Suspend + delete controls.
+   =========================================================================== */
+
+.admin-wrap{display:flex;flex-direction:column;height:calc(100vh - 53px);overflow:hidden;}
+.admin-body{flex:1;display:flex;min-height:0;overflow:hidden;}
+
+/* ─── users list (left column) ─────────────────────────────────────────────── */
+.admin-users{
+  width:340px;flex-shrink:0;border-right:1px solid var(--line-soft);
+  background:var(--navy-1);display:flex;flex-direction:column;min-height:0;
+}
+.admin-users-head{padding:16px 18px;border-bottom:1px solid var(--line-soft);flex-shrink:0;}
+.admin-users-head h2{font-size:17px;margin:0 0 3px;}
+.admin-users-head .sub{font-size:12.5px;color:var(--text-faint);margin:0;}
+.admin-users-list{flex:1;min-height:0;overflow-y:auto;padding:8px;}
+.admin-users-list::-webkit-scrollbar{width:8px;}
+.admin-users-list::-webkit-scrollbar-thumb{background:var(--navy-4);border-radius:4px;}
+
+.au-row{
+  display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:10px;cursor:pointer;
+  transition:background .13s;margin-bottom:4px;
+}
+.au-row:hover{background:var(--navy-3);}
+.au-row.active{background:var(--cyan-soft);border:1px solid var(--cyan-line);}
+.au-row .au-meta{flex:1;min-width:0;}
+.au-row .au-email{font-size:13.5px;color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.au-row .au-sub{font-size:11.5px;color:var(--text-faint);font-family:'JetBrains Mono',monospace;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.au-row .au-pill{
+  font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:999px;flex-shrink:0;
+  font-family:'JetBrains Mono',monospace;
+}
+.au-pill.admin{background:var(--cyan-soft);color:var(--cyan);border:1px solid var(--cyan-line);}
+.au-pill.banned{background:#f06b6b1a;color:var(--danger);border:1px solid #f06b6b55;}
+
+/* ─── detail (right column) ────────────────────────────────────────────────── */
+.admin-detail{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.admin-detail-head{
+  padding:16px 22px;border-bottom:1px solid var(--line-soft);flex-shrink:0;
+  display:flex;align-items:center;gap:14px;
+}
+.admin-detail-head .au-email{font-size:18px;font-weight:700;color:var(--text);}
+.admin-detail-head .sp{flex:1;}
+.admin-detail-head .acts{display:flex;gap:8px;}
+.admin-detail-head .acts button{
+  font-size:12.5px;padding:7px 13px;border-radius:8px;cursor:pointer;
+  background:transparent;border:1px solid var(--line);color:var(--text-dim);transition:all .15s;
+}
+.admin-detail-head .acts button:hover{border-color:var(--warn);color:var(--warn);}
+.admin-detail-head .acts button.danger:hover{border-color:var(--danger);color:var(--danger);}
+.admin-detail-head .acts button.unban:hover{border-color:var(--ok);color:var(--ok);}
+
+.admin-detail-body{flex:1;min-height:0;overflow-y:auto;padding:18px 22px 40px;}
+.admin-detail-body::-webkit-scrollbar{width:9px;}
+.admin-detail-body::-webkit-scrollbar-thumb{background:var(--navy-4);border-radius:5px;}
+
+.ad-section{margin-bottom:26px;}
+.ad-section h3{font-size:14px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px;font-weight:600;}
+
+/* conversation row (clickable → opens reader) */
+.ad-conv{
+  display:flex;align-items:center;gap:12px;padding:13px 15px;background:var(--navy-2);
+  border:1px solid var(--line);border-radius:11px;margin-bottom:8px;cursor:pointer;transition:border-color .14s;
+}
+.ad-conv:hover{border-color:var(--cyan-line);}
+.ad-conv .t{font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+.ad-conv .s{font-size:11.5px;color:var(--text-faint);font-family:'JetBrains Mono',monospace;flex-shrink:0;}
+.ad-empty{color:var(--text-faint);font-size:13.5px;padding:14px 0;}
+
+/* ─── conversation reader (overlay panel) ──────────────────────────────────── */
+.admin-reader{
+  position:fixed;inset:0;z-index:60;background:rgba(7,13,26,.82);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+}
+.admin-reader-card{
+  width:min(820px,96vw);max-height:88vh;display:flex;flex-direction:column;
+  background:var(--navy-1);border:1px solid var(--line);border-radius:16px;overflow:hidden;
+}
+.admin-reader-head{padding:16px 20px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:12px;flex-shrink:0;}
+.admin-reader-head .t{font-size:16px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.admin-reader-head .close{
+  background:transparent;border:1px solid var(--line);color:var(--text-dim);
+  border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;
+}
+.admin-reader-head .close:hover{border-color:var(--danger);color:var(--danger);}
+.admin-reader-body{flex:1;min-height:0;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:12px;}
+.admin-reader-body::-webkit-scrollbar{width:8px;}
+.admin-reader-body::-webkit-scrollbar-thumb{background:var(--navy-4);border-radius:4px;}
+.ar-msg{max-width:92%;}
+.ar-msg.user{align-self:flex-end;}
+.ar-msg.assistant{align-self:flex-start;}
+.ar-msg.tool{align-self:flex-start;opacity:.8;}
+.ar-msg .role{font-size:10.5px;color:var(--text-faint);font-family:'JetBrains Mono',monospace;margin-bottom:3px;text-transform:uppercase;}
+.ar-msg .bubble{
+  background:var(--navy-3);border:1px solid var(--line);border-radius:11px;padding:11px 14px;
+  font-size:13.5px;line-height:1.6;color:var(--text);word-break:break-word;overflow-wrap:anywhere;
+}
+.ar-msg.user .bubble{background:var(--cyan-soft);border-color:var(--cyan-line);}
+.ar-msg.tool .bubble{background:transparent;border:1px dashed var(--line);font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);}
+/* reuse markdown styles from Builder via .md-* classes */
+.ar-msg .bubble .md-pre{background:var(--navy-1);border:1px solid var(--line-soft);border-radius:7px;padding:9px 11px;overflow-x:auto;margin:6px 0;font-size:12px;}
+.ar-msg .bubble .md-code{background:var(--navy-4);border-radius:4px;padding:1px 5px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--teal);}
+.ar-msg .bubble a{color:var(--cyan);text-decoration:underline;}
+.ar-msg .bubble p{margin:5px 0;}
+.ar-msg .bubble p:first-child{margin-top:0;}
+.ar-msg .bubble p:last-child{margin-bottom:0;}
+
+@media (max-width:880px){
+  .admin-body{flex-direction:column;}
+  .admin-users{width:100%;height:200px;border-right:none;border-bottom:1px solid var(--line-soft);}
+}

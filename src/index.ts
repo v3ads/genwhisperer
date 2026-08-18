@@ -13,6 +13,7 @@ import authRouter from "./routes/auth.js";
 import profileRouter from "./routes/profile.js";
 import projectsRouter from "./routes/projects.js";
 import agentRouter from "./routes/agent.js";
+import adminRouter from "./routes/admin.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 
@@ -119,6 +120,7 @@ app.use("/api/projects", projectsRouter);
 // stricter chat limiter (30/min). The other agent sub-routes (conversations,
 // kb-query, approve) are plain JSON and don't need it.
 app.use("/api/agent", chatLimiter, agentRouter);
+app.use("/api/admin", adminRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {

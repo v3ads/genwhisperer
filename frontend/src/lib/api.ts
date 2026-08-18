@@ -190,3 +190,53 @@ export const agent = {
     request<KbQueryResult>(`/agent/kb-query?question=${encodeURIComponent(question)}`),
   kbHealth: () => request<{ status?: string; version?: string }>("/agent/kb-health"),
 };
+
+// --- admin (V2) — owner dashboard -----------------------------------------
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  role: Role;
+  suspended: boolean;
+  createdAt: string;
+  lastSignedIn: string | null;
+  projectCount: number;
+  conversationCount: number;
+}
+
+export interface AdminProject {
+  id: number;
+  name: string;
+  genesisProjectId: string | null;
+  mcpUrl: string;
+  tokenMasked: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export interface AdminConversation extends ConversationSummary {}
+
+export interface AdminConversationDetail {
+  conversation: {
+    id: number;
+    userId: number;
+    genesisProjectId: number;
+    title: string;
+    model: string;
+  };
+  messages: Array<HistoryMessage & { promptTokens: number; completionTokens: number }>;
+}
+
+export const admin = {
+  users: () => request<{ users: AdminUser[] }>("/admin/users"),
+  userProjects: (id: number) => request<{ projects: AdminProject[] }>(`/admin/users/${id}/projects`),
+  userConversations: (id: number) =>
+    request<{ conversations: AdminConversation[] }>(`/admin/users/${id}/conversations`),
+  conversation: (id: number) => request<AdminConversationDetail>(`/admin/conversations/${id}`),
+  suspend: (id: number, suspended: boolean) =>
+    request<{ success: true; suspended: boolean }>(`/admin/users/${id}/suspend`, {
+      method: "PATCH",
+      body: JSON.stringify({ suspended }),
+    }),
+  deleteUser: (id: number) => request<{ success: true }>(`/admin/users/${id}`, { method: "DELETE" }),
+};

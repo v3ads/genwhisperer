@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
-import { RequireAuth } from "./components/Guards";
+import { RequireAuth, RequireAdmin } from "./components/Guards";
 import UnderConstruction from "./pages/UnderConstruction";
 import SignIn from "./pages/SignIn";
 import Verify from "./pages/Verify";
@@ -10,6 +10,7 @@ import Builder from "./pages/Builder";
 import Profile from "./pages/Profile";
 import Projects from "./pages/Projects";
 import Conversations from "./pages/Conversations";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
           <Route path="/projects" element={<RequireAuth><Projects /></RequireAuth>} />
           <Route path="/conversations" element={<RequireAuth><Conversations /></RequireAuth>} />
+          <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AuthProvider>
