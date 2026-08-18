@@ -14,6 +14,7 @@ import profileRouter from "./routes/profile.js";
 import projectsRouter from "./routes/projects.js";
 import agentRouter from "./routes/agent.js";
 import adminRouter from "./routes/admin.js";
+import billingRouter from "./routes/billing.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 
@@ -77,7 +78,19 @@ app.use(
 
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 app.use(cookieParser());
-app.use(express.json({ limit: "1mb" }));
+// express.json with a verify hook that captures the raw body for the Stripe
+// webhook route (signature verification needs the exact raw bytes).
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, _res, buf) => {
+      const url = req.url ?? "";
+      if (url.startsWith("/api/billing/webhook")) {
+        (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 
 // Apply gzip compression to everything EXCEPT the SSE agent endpoint.
@@ -111,7 +124,12 @@ const chatLimiter = rateLimit({
 
 // ─── API routes ───────────────────────────────────────────────────────────────
 // CSRF defense-in-depth: reject cross-origin state-changing requests.
-app.use("/api", csrfOriginGuard(ALLOWED_ORIGINS));
+// The Stripe webhook is exempt (Stripe doesn't send an Origin header; it's
+// authenticated by signature instead).
+app.use("/api", (req, res, next) => {
+  if (req.path === "/billing/webhook") return next();
+  return csrfOriginGuard(ALLOWED_ORIGINS)(req, res, next);
+});
 
 app.use("/api/auth", authLimiter, authRouter);
 app.use("/api/profile", profileRouter);
@@ -121,6 +139,7 @@ app.use("/api/projects", projectsRouter);
 // kb-query, approve) are plain JSON and don't need it.
 app.use("/api/agent", chatLimiter, agentRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/billing", billingRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {

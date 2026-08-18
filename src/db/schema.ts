@@ -17,6 +17,8 @@ export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
 export const keyTypeEnum = pgEnum("key_type", ["trial", "own"]);
 /** Roles stored on a conversation message (OpenAI-style chat roles). */
 export const messageRoleEnum = pgEnum("message_role", ["system", "user", "assistant", "tool"]);
+/** Subscription tier (Phase 7a billing). */
+export const tierEnum = pgEnum("tier", ["trial", "starter", "pro", "lapsed"]);
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export const users = pgTable("users", {
@@ -226,3 +228,55 @@ export const messages = pgTable(
 
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = typeof messages.$inferInsert;
+
+// ─── Stripe customers (Phase 7a billing) ─────────────────────────────────────
+// One row per user who has ever interacted with Stripe (created on first
+// checkout). The stripe_customer_id is reused across subscription changes.
+export const stripeCustomers = pgTable(
+  "stripe_customers",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+    stripeCustomerId: varchar("stripe_customer_id", { length: 64 }).notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    // Lookups by Stripe customer id (webhooks).
+    customerIdx: index("idx_stripe_customers_stripe_id").on(t.stripeCustomerId),
+  })
+);
+
+export type StripeCustomer = typeof stripeCustomers.$inferSelect;
+export type InsertStripeCustomer = typeof stripeCustomers.$inferInsert;
+
+// ─── Subscriptions (Phase 7a billing) ────────────────────────────────────────
+// The source of truth for a user's current tier + Stripe subscription state.
+// Updated by webhook handlers. tier drives gating (project limits, trial turn
+// cap, lapsed=read-only). trial_turns_used counts agent turns on the platform
+// key during the free trial (cap from system_settings, default 2).
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+    tier: tierEnum("tier").default("trial").notNull(),
+    stripeSubscriptionId: varchar("stripe_subscription_id", { length: 64 }),
+    stripePriceId: varchar("stripe_price_id", { length: 64 }),
+    /** Stripe subscription status: active, past_due, canceled, etc. */
+    status: varchar("status", { length: 24 }),
+    /** End of the current billing period (for end-of-period downgrades + lapsed detection). */
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    /** Trial: agent turns consumed on the platform key (cap from system_settings, default 2). */
+    trialTurnsUsed: integer("trial_turns_used").default(0).notNull(),
+    /** Plan interval the user is on (monthly/annual) — for display + proration. */
+    interval: varchar("interval", { length: 8 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    userIdx: index("idx_subscriptions_user_id").on(t.userId),
+  })
+);
+
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;

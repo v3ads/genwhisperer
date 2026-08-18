@@ -29,6 +29,7 @@ import {
 } from "../services/agentLoop.js";
 import { kbAsk, kbHealth } from "../services/estageKb.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
+import { getTierState, incrementTrialTurns } from "../services/billing.js";
 import {
   listConversations,
   loadHistory,
@@ -59,20 +60,45 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   const { genesisProjectId, message, model } = parsed.data;
   const conversationId = parsed.data.conversationId ?? null;
 
-  // ── Load + decrypt the tenant's OpenRouter key ───────────────────────────
-  const keyRows = await db
-    .select()
-    .from(userApiKeys)
-    .where(eq(userApiKeys.userId, userId))
-    .limit(1);
-  if (!keyRows.length) {
-    res
-      .status(400)
-      .json({ error: "No OpenRouter key saved. Add one in Profile first." });
+  // ── Tier gate: lapsed users can't start turns; trial users hit the turn cap ──
+  const tierState = await getTierState(userId);
+  if (!tierState.canStartTurn) {
+    res.status(402).json({
+      error: tierState.statusLabel,
+      tier: tierState.tier,
+      trialTurnsUsed: tierState.trialTurnsUsed,
+      trialTurnCap: tierState.trialTurnCap,
+    });
     return;
   }
-  const openrouterKey = decrypt(keyRows[0].encryptedKey);
-  const chosenModel = model || keyRows[0].preferredModel || DEFAULT_V2_MODEL;
+
+  // ── Load the OpenRouter key: platform key for trial, BYO key for paid ──────
+  // Trial users run on the shared OPENROUTER_PLATFORM_KEY (bounded by the turn
+  // cap). Paid users must have their own key stored (encrypted at rest).
+  let openrouterKey: string;
+  let chosenModel: string;
+  if (tierState.usePlatformKey) {
+    openrouterKey = process.env.OPENROUTER_PLATFORM_KEY ?? "";
+    if (!openrouterKey) {
+      res.status(500).json({ error: "Trial key not configured. Please contact support." });
+      return;
+    }
+    chosenModel = model || DEFAULT_V2_MODEL;
+  } else {
+    const keyRows = await db
+      .select()
+      .from(userApiKeys)
+      .where(eq(userApiKeys.userId, userId))
+      .limit(1);
+    if (!keyRows.length) {
+      res
+        .status(400)
+        .json({ error: "No OpenRouter key saved. Add one in Profile first." });
+      return;
+    }
+    openrouterKey = decrypt(keyRows[0].encryptedKey);
+    chosenModel = model || keyRows[0].preferredModel || DEFAULT_V2_MODEL;
+  }
 
   // ── Load + decrypt the selected Genesis project's token ──────────────────
   const projRows = await db
@@ -136,6 +162,11 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     },
     sink
   );
+
+  // ── Close-out: increment the trial turn counter (trial users only) ────────
+  if (tierState.usePlatformKey) {
+    try { await incrementTrialTurns(userId); } catch { /* non-fatal */ }
+  }
 
   // ── Close-out: AITable session logging (fire-and-forget) ──────────────────
   // Mirrors v1's pattern — logSessionToAITable is already fire-and-forget

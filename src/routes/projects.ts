@@ -20,6 +20,7 @@ import {
   parseGenesisProjectId,
   validateGenesisConnection,
 } from "../services/genesisMcp.js";
+import { canAddProject, getTierState } from "../services/billing.js";
 import { z } from "zod";
 
 const router = Router();
@@ -81,6 +82,20 @@ router.post("/", requireAuth, async (req: AuthRequest, res) => {
   const userId = req.user!.id;
   const { name, mcpUrl, token } = parsed.data;
   const genesisProjectId = parseGenesisProjectId(mcpUrl);
+
+  // Tier gate: enforce the per-tier project-count limit (trial=1, starter=2, pro=∞).
+  const allowed = await canAddProject(userId);
+  if (!allowed.ok) {
+    const state = await getTierState(userId);
+    const limit = allowed.maxProjects;
+    res.status(402).json({
+      error: `Your plan allows ${limit === 1 ? "1 project" : `${limit} projects`}. Upgrade to add more.`,
+      tier: state.tier,
+      maxProjects: limit,
+      current: allowed.current,
+    });
+    return;
+  }
 
   // Validate the connection (handshake + tools/list) before storing.
   let toolCount = 0;
