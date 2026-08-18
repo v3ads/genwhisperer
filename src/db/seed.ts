@@ -5,8 +5,10 @@ import { systemSettings } from "./schema.js";
 import { sql } from "drizzle-orm";
 
 const DEFAULT_SETTINGS = [
-  { key: "trial_message_cap", value: "5" },
-  { key: "default_model", value: "deepseek/deepseek-v4-pro" },
+  // V2 note: the v1 trial_message_cap and default_model settings were removed
+  // (V2 drops the trial cap — every tenant brings their own OpenRouter key —
+  // and the v1 default model; the per-tenant preferred model lives on
+  // user_api_keys). Keep the Brevo + GetResponse defaults below.
   { key: "brevo_sender_name", value: process.env.BREVO_SENDER_NAME ?? "Geny" },
   { key: "brevo_sender_email", value: process.env.BREVO_SENDER_EMAIL ?? "support@genwhisperer.com" },
   { key: "getresponse_list_id", value: process.env.GETRESPONSE_LIST_ID ?? "" },

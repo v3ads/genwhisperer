@@ -96,9 +96,6 @@ export async function notifyNewSignup(email: string): Promise<void> {
   await notifyOwner("New sign-up", `A new user just signed up:\n\nEmail: ${email}\nTime: ${new Date().toISOString()}`);
 }
 
-export async function notifyTrialExhausted(email: string, messageCount: number): Promise<void> {
-  await notifyOwner(
-    "Trial exhausted",
-    `A user has used all their free trial messages:\n\nEmail: ${email}\nMessages used: ${messageCount}\nTime: ${new Date().toISOString()}`
-  );
-}
+// V2 note: the v1 notifyTrialExhausted() helper was removed — V2 drops the
+// trial cap (every tenant brings their own OpenRouter key), so there is no
+// trial-exhaustion event to notify on. notifyOwner + notifyNewSignup remain.
