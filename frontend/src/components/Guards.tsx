@@ -18,10 +18,4 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-export function RequireAdmin({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <Loading />;
-  if (!user) return <Navigate to="/sign-in" replace />;
-  if (user.role !== "admin") return <Navigate to="/chat" replace />;
-  return <>{children}</>;
-}
+// V2 drops the admin dashboard, so RequireAdmin is removed.

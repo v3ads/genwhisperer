@@ -8,7 +8,7 @@ import "./Auth.css";
  *
  * We must NOT fetch the verify endpoint — an httpOnly cookie can only be set by
  * a full browser navigation that receives the Set-Cookie header. So we redirect
- * the whole window to the backend, which sets gw_session and 302s to /chat.
+ * the whole window to the backend, which sets gw_session and 302s to /builder.
  */
 export default function Verify() {
   const [error, setError] = useState<string | null>(null);

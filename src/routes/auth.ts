@@ -113,8 +113,8 @@ router.get("/verify", async (req, res) => {
     path: "/",
   });
 
-  // Redirect to frontend after successful verification
-  res.redirect(`${appUrl}/chat`);
+  // Redirect to frontend after successful verification (V2 → /builder)
+  res.redirect(`${appUrl}/builder`);
 });
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────

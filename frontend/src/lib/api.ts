@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
-// GenWhisperer API client
-// Wraps every endpoint from API_CONTRACT.md / CLAUDE_HANDOFF.md.
-// Same-origin: all paths are relative "/api/...". credentials:"include" on every
-// call so the httpOnly gw_session cookie is always sent.
+// GenWhisperer V2 API client
+// Wraps every V2 endpoint. Same-origin: all paths are relative "/api/...".
+// credentials:"include" on every call so the httpOnly gw_session cookie is
+// always sent. SSE streaming for the agent loop is in lib/agentStream.ts.
 // ---------------------------------------------------------------------------
 
 export type Role = "user" | "admin";
@@ -15,56 +15,80 @@ export interface User {
   suspended: boolean;
 }
 
-export interface ChatStatus {
-  trialMessagesUsed: number;
-  trialMessageCap: number;
-  trialExhausted: boolean;
-  hasOwnKey: boolean;
+// --- Profile ---------------------------------------------------------------
+
+export interface OrModel {
+  id: string;
+  name?: string;
+  context_length?: number;
+  supported_parameters?: string[];
+  pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
+  _group?: string;
+}
+
+export interface Profile {
+  hasOpenRouterKey: boolean;
   maskedKey: string | null;
   preferredModel: string;
-  isAdmin?: boolean;
+  models: OrModel[];
 }
 
-export interface GetResponseStatus {
-  connected: boolean;
-  error?: string;
-  accountName?: string;
-  email?: string;
-  listId?: string;
-  listName?: string | null;
-  campaigns?: { id: string; name: string }[];
-  contactCount?: number;
-}
+// --- Projects --------------------------------------------------------------
 
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
-
-export interface AdminUser {
+export interface Project {
   id: number;
-  email: string;
-  name?: string | null;
-  role: Role;
-  suspended: boolean;
+  name: string;
+  genesisProjectId: string | null;
+  mcpUrl: string;
+  tokenMasked: string;
+  lastUsedAt: string | null;
   createdAt: string;
-  lastSignedIn: string | null;
-  trialMessagesUsed: number;
-  hasOwnKey: boolean;
-  preferredModel: string | null;
+  updatedAt: string;
 }
 
-export interface AdminStats {
-  totalUsers: number;
-  totalMessages: number;
-  totalTokens: number;
-  trialUsers: number;
-  ownKeyUsers: number;
-  dailyVolume: { date: string; count: number }[];
-  modelUsage?: { model: string; count: number }[];
+// --- Conversations ---------------------------------------------------------
+
+export type MessageRole = "system" | "user" | "assistant" | "tool";
+
+export interface ConversationSummary {
+  id: number;
+  genesisProjectId: number;
+  title: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export type SettingsMap = Record<string, string>;
+export interface HistoryMessage {
+  id: number;
+  role: MessageRole;
+  content: string;
+  toolCalls: unknown | null;
+  costUsd: string;
+  createdAt: string;
+}
+
+export interface ConversationDetail {
+  conversation: {
+    id: number;
+    genesisProjectId: number;
+    title: string;
+    model: string;
+  };
+  messages: HistoryMessage[];
+}
+
+// --- KB --------------------------------------------------------------------
+
+export interface KbSource {
+  title?: string;
+  url?: string;
+}
+export interface KbQueryResult {
+  answer: string;
+  sources: KbSource[];
+  responseTimeMs?: number;
+}
 
 // --- core fetch helper -----------------------------------------------------
 
@@ -108,152 +132,61 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
 // --- auth ------------------------------------------------------------------
 
 export const auth = {
-  /** Request a magic-link email. */
   requestLink: (email: string) =>
     request<{ success: true }>("/auth/request", {
       method: "POST",
       body: JSON.stringify({ email }),
     }),
-
-  /** Current session, or 401 if signed out. */
   me: () => request<{ user: User }>("/auth/me"),
-
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 };
 
-// --- chat ------------------------------------------------------------------
+// --- profile (V2) ----------------------------------------------------------
 
-export const chat = {
-  status: () => request<ChatStatus>("/chat/status"),
-  models: () => request<{ models: { id: string }[] }>("/chat/models"),
-};
-
-/**
- * Stream a chat completion. Handles the 402 trial wall and the SSE stream.
- * onDelta is called with each incremental token; resolves when [DONE].
- * Throws { trialExhausted: true, ... } on 402 so the caller shows the upgrade UI.
- */
-export interface TrialExhausted {
-  trialExhausted: true;
-  message: string;
-  trialMessagesUsed: number;
-  trialMessageCap: number;
-}
-
-export async function streamChat(
-  messages: ChatMessage[],
-  onDelta: (full: string, delta: string) => void,
-  signal?: AbortSignal
-): Promise<string> {
-  const res = await fetch(`${BASE}/chat/message`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
-    signal,
-  });
-
-  if (res.status === 402) {
-    const data = (await res.json()) as Omit<TrialExhausted, "trialExhausted">;
-    throw { trialExhausted: true, ...data } as TrialExhausted;
-  }
-  if (res.status === 413) {
-    throw new ApiError(
-      413,
-      "This conversation has gotten too long to send. Start a new chat to keep going."
-    );
-  }
-  if (!res.ok || !res.body) {
-    throw new ApiError(res.status, "Chat request failed");
-  }
-
-  const reader = res.body.getReader();
-  try {
-    const decoder = new TextDecoder();
-    let full = "";
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE frames are separated by newlines; keep the last partial line buffered
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const payload = line.slice(6).trim();
-        if (payload === "[DONE]") return full;
-        try {
-          const json = JSON.parse(payload);
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) {
-            full += delta;
-            onDelta(full, delta);
-          }
-        } catch {
-          /* malformed chunk — skip */
-        }
-      }
-    }
-    return full;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-// --- account ---------------------------------------------------------------
-
-export const account = {
+export const profile = {
+  get: () => request<Profile>("/profile"),
   saveKey: (apiKey: string, model?: string) =>
     request<{ success: true; maskedKey: string; preferredModel: string }>(
-      "/account/api-key",
-      // Backend expects `model` (not `preferredModel`) on the wire.
+      "/profile/api-key",
       { method: "POST", body: JSON.stringify({ apiKey, model }) }
     ),
-
-  removeKey: () => request<void>("/account/api-key", { method: "DELETE" }),
-
+  removeKey: () => request<void>("/profile/api-key", { method: "DELETE" }),
   setModel: (model: string) =>
-    request<{ success: true; preferredModel: string }>("/account/model", {
+    request<{ success: true; preferredModel: string }>("/profile/model", {
       method: "PATCH",
-      // Backend expects `model` (not `preferredModel`) on the wire.
       body: JSON.stringify({ model }),
     }),
 };
 
-// --- admin -----------------------------------------------------------------
+// --- projects (V2) ---------------------------------------------------------
 
-export const admin = {
-  users: () => request<{ users: AdminUser[] }>("/admin/users"),
-  stats: () => request<AdminStats>("/admin/stats"),
-  settings: () => request<{ settings: SettingsMap }>("/admin/settings"),
-  updateSetting: (key: string, value: string) =>
-    request<{ success: true }>("/admin/settings", {
+export const projects = {
+  list: () => request<{ projects: Project[] }>("/projects"),
+  create: (name: string, mcpUrl: string, token: string) =>
+    request<{ success: true; id: number; toolCount: number } & Partial<Project>>(
+      "/projects",
+      { method: "POST", body: JSON.stringify({ name, mcpUrl, token }) }
+    ),
+  update: (id: number, patch: { name?: string; token?: string }) =>
+    request<{ success: true }>(`/projects/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ key, value }),
+      body: JSON.stringify(patch),
     }),
-  suspendUser: (id: number, suspended: boolean) =>
-    request<{ success: true }>(`/admin/users/${id}/suspend`, {
-      method: "PATCH",
-      body: JSON.stringify({ suspended }),
-    }),
-  setRole: (id: number, role: "user" | "admin") =>
-    request<{ success: true }>(`/admin/users/${id}/role`, {
-      method: "PATCH",
-      body: JSON.stringify({ role }),
-    }),
-  deleteUser: (id: number) =>
-    request<void>(`/admin/users/${id}`, { method: "DELETE" }),
-  userUsage: (id: number) =>
-    request<{ usage: unknown[] }>(`/admin/users/${id}/usage`),
-  getResponseStatus: () =>
-    request<GetResponseStatus>("/admin/getresponse/status"),
-  testSubscribe: (email: string) =>
-    request<{ success: true; note?: string }>("/admin/getresponse/test-subscribe", {
+  remove: (id: number) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+};
+
+// --- agent (V2) — conversations + kb (the SSE message stream is in agentStream.ts) ---
+
+export const agent = {
+  conversations: () => request<{ conversations: ConversationSummary[] }>("/agent/conversations"),
+  getConversation: (id: number) => request<ConversationDetail>(`/agent/conversations/${id}`),
+  deleteConversation: (id: number) => request<void>(`/agent/conversations/${id}`, { method: "DELETE" }),
+  approveGate: (gateId: string, approved: boolean) =>
+    request<{ success: true; approved: boolean }>(`/agent/approve/${gateId}`, {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ approved }),
     }),
+  kbQuery: (question: string) =>
+    request<KbQueryResult>(`/agent/kb-query?question=${encodeURIComponent(question)}`),
+  kbHealth: () => request<{ status?: string; version?: string }>("/agent/kb-health"),
 };
