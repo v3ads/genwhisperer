@@ -1,0 +1,68 @@
+/* ===========================================================================
+   GenWhisperer V2 — Pricing block (reusable: landing + /billing)
+   3 cards (Free Trial / Starter / Pro) + monthly/annual toggle with savings.
+   =========================================================================== */
+
+.pb-wrap{max-width:920px;margin:0 auto;}
+
+/* monthly/annual toggle */
+.pb-toggle-row{
+  display:flex;align-items:center;justify-content:center;gap:12px;
+  margin-bottom:28px;font-family:'Inter',sans-serif;font-size:14px;color:var(--text-faint);
+}
+.pb-toggle-row span.active{color:var(--text);font-weight:600;}
+.pb-save{
+  font-size:12px;font-weight:600;color:var(--teal);
+  background:var(--teal-soft);border:1px solid #2dd4bf44;border-radius:999px;
+  padding:2px 8px;margin-left:4px;
+}
+.pb-toggle{
+  position:relative;width:46px;height:26px;border-radius:999px;border:1px solid var(--line);
+  background:var(--navy-3);cursor:pointer;padding:0;transition:background .15s;
+}
+.pb-toggle.on{background:var(--grad);border-color:transparent;}
+.pb-knob{
+  position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+  background:#fff;transition:transform .18s;box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+.pb-toggle.on .pb-knob{transform:translateX(20px);}
+
+/* cards */
+.pb-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:stretch;}
+.pb-cards.compact{gap:14px;}
+
+.pb-card{
+  position:relative;background:var(--navy-2);border:1px solid var(--line);border-radius:16px;
+  padding:26px 22px 24px;display:flex;flex-direction:column;
+}
+.pb-card.highlight{border-color:var(--cyan-line);background:linear-gradient(180deg,var(--cyan-soft) 0%,var(--navy-2) 40%);}
+.pb-card.current{border-color:var(--ok);box-shadow:0 0 0 1px var(--ok);}
+.pb-badge{
+  position:absolute;top:-11px;left:50%;transform:translateX(-50%);
+  background:var(--grad);color:#06121f;font-family:'Sora',sans-serif;font-weight:700;font-size:11px;
+  padding:4px 12px;border-radius:999px;letter-spacing:.02em;white-space:nowrap;
+}
+.pb-card h3{font-family:'Sora',sans-serif;font-size:19px;margin:0 0 10px;color:var(--text);}
+.pb-price{display:flex;align-items:baseline;gap:3px;margin-bottom:2px;}
+.pb-amount{font-family:'Sora',sans-serif;font-weight:800;font-size:38px;color:var(--text);letter-spacing:-0.02em;}
+.pb-period{font-size:15px;color:var(--text-faint);}
+.pb-billed{font-size:12px;color:var(--text-faint);margin-bottom:14px;}
+.pb-blurb{font-size:13.5px;color:var(--text-dim);margin:0 0 10px;line-height:1.5;}
+.pb-projects{
+  font-size:12px;font-weight:600;color:var(--cyan);font-family:'JetBrains Mono',monospace;
+  background:var(--cyan-soft);border:1px solid var(--cyan-line);border-radius:8px;
+  padding:5px 10px;display:inline-block;margin-bottom:16px;align-self:flex-start;
+}
+.pb-features{list-style:none;padding:0;margin:0 0 22px;flex:1;}
+.pb-features li{
+  font-size:13.5px;color:var(--text-dim);padding:6px 0 6px 22px;position:relative;line-height:1.4;
+}
+.pb-features li::before{
+  content:"✓";position:absolute;left:0;top:5px;color:var(--ok);font-weight:700;font-size:13px;
+}
+.pb-cta{width:100%;margin-top:auto;}
+.pb-foot{text-align:center;color:var(--text-faint);font-size:13px;margin-top:22px;}
+
+@media (max-width:760px){
+  .pb-cards{grid-template-columns:1fr;}
+}

@@ -15,6 +15,7 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [limitHit, setLimitHit] = useState(false);
 
   // add-form state
   const [name, setName] = useState("");
@@ -44,7 +45,12 @@ export default function Projects() {
       setOk("Project connected. The MCP handshake passed.");
       void load();
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not add project.");
+      if (e instanceof ApiError && e.status === 402) {
+        setErr(e.message);
+        setLimitHit(true);
+      } else {
+        setErr(e instanceof ApiError ? e.message : "Could not add project.");
+      }
     } finally { setBusy(false); }
   }
 
@@ -78,7 +84,14 @@ export default function Projects() {
       <div className="app-glow" />
       <AppNav />
       <main className="app-main">
-        {err && <div className="banner banner-err">{err}</div>}
+        {err && (
+          <div className="banner banner-err">
+            {err}
+            {limitHit && (
+              <> &nbsp;<a className="link-inline" href="/billing">Upgrade your plan →</a></>
+            )}
+          </div>
+        )}
         {ok && <div className="banner banner-ok">{ok}</div>}
 
         <div className="card">
@@ -90,7 +103,7 @@ export default function Projects() {
           </p>
 
           {!showAdd ? (
-            <button className="btn btn-primary" onClick={() => setShowAdd(true)} style={{ width: "auto" }}>
+            <button className="btn btn-primary" onClick={() => { setShowAdd(true); setErr(null); setLimitHit(false); }} style={{ width: "auto" }}>
               + Add project
             </button>
           ) : (

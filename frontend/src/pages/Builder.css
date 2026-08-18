@@ -38,6 +38,17 @@
 .cost-badge.warn{color:var(--warn);border-color:#f5b45455;}
 .cost-badge.high{color:var(--danger);border-color:#f06b6b55;}
 
+/* trial / lapsed / upgrade chip (links to /billing) */
+.trial-chip{
+  flex-shrink:0;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;
+  padding:6px 11px;border-radius:999px;border:1px solid var(--cyan-line);
+  background:var(--cyan-soft);color:var(--cyan);cursor:pointer;text-decoration:none;
+  transition:border-color .15s,color .15s;
+}
+.trial-chip:hover{border-color:var(--cyan);color:#fff;}
+.trial-chip.urgent{background:#f5b4541a;border-color:#f5b45455;color:var(--warn);}
+.trial-chip.urgent:hover{border-color:var(--warn);color:#fff;}
+
 /* body: chat + kb panel */
 .b-body{flex:1;display:flex;min-height:0;overflow:hidden;}
 .b-chat{flex:1;display:flex;flex-direction:column;min-height:0;min-width:0;}

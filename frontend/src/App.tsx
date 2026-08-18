@@ -11,6 +11,7 @@ import Profile from "./pages/Profile";
 import Projects from "./pages/Projects";
 import Conversations from "./pages/Conversations";
 import Admin from "./pages/Admin";
+import Billing from "./pages/Billing";
 import NotFound from "./pages/NotFound";
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
           <Route path="/projects" element={<RequireAuth><Projects /></RequireAuth>} />
           <Route path="/conversations" element={<RequireAuth><Conversations /></RequireAuth>} />
+          <Route path="/billing" element={<RequireAuth><Billing /></RequireAuth>} />
           <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
           <Route path="*" element={<NotFound />} />
         </Routes>

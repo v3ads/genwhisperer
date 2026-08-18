@@ -17,6 +17,7 @@ export function AppNav() {
     { to: "/conversations", label: "History", match: "/conversations" },
     { to: "/projects", label: "Projects", match: "/projects" },
     { to: "/profile", label: "Profile", match: "/profile" },
+    { to: "/billing", label: "Billing", match: "/billing" },
     { to: "/admin", label: "Admin", match: "/admin", adminOnly: true },
   ];
 

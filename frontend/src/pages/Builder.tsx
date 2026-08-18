@@ -5,10 +5,12 @@ import {
   profile as profileApi,
   projects as projectsApi,
   agent as agentApi,
+  billing as billingApi,
   ApiError,
   type Project,
   type OrModel,
   type KbSource,
+  type SubscriptionState,
 } from "../lib/api";
 import { streamAgent } from "../lib/agentStream";
 import { mdToHtml } from "../lib/mdToHtml";
@@ -44,6 +46,7 @@ export default function Builder() {
   const [hasKey, setHasKey] = useState(false);
   const [models, setModels] = useState<OrModel[]>([]);
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [sub, setSub] = useState<SubscriptionState | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<number | "">("");
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -66,9 +69,11 @@ export default function Builder() {
       setModels(p.models);
       setModel(p.preferredModel || DEFAULT_MODEL);
       setProjects(pr.projects);
+      // Fetch subscription state for the trial-turn indicator + gating.
+      try { setSub(await billingApi.subscription()); } catch { /* non-fatal */ }
       if (pr.projects.length === 0) {
         setSetupMsg("Connect a Genesis project to start building.");
-      } else if (!p.hasOpenRouterKey) {
+      } else if (!p.hasOpenRouterKey && !(await billingApi.subscription()).usePlatformKey) {
         setSetupMsg("Add your OpenRouter key in Profile to start building.");
       } else {
         setSetupMsg(null);
@@ -228,6 +233,23 @@ export default function Builder() {
           <span className={`cost-badge ${costClass}`} title="Running OpenRouter cost this session">
             <span className="coin">$</span>{cost.toFixed(4)}
           </span>
+          {/* Trial-turn indicator / lapsed / upgrade prompt */}
+          {sub && sub.tier === "trial" && (
+            <a
+              className={`trial-chip ${sub.canStartTurn ? "" : "urgent"}`}
+              href="/billing"
+              title="Upgrade to keep building"
+            >
+              {sub.canStartTurn
+                ? `Trial: ${sub.trialTurnCap - sub.trialTurnsUsed} turn${sub.trialTurnCap - sub.trialTurnsUsed === 1 ? "" : "s"} left · Upgrade`
+                : "Trial used up · Upgrade to keep building"}
+            </a>
+          )}
+          {sub && sub.tier === "lapsed" && (
+            <a className="trial-chip urgent" href="/billing" title="Resubscribe to resume building">
+              Lapsed · Resubscribe
+            </a>
+          )}
         </div>
 
         {/* body: chat + KB panel */}
@@ -243,29 +265,6 @@ export default function Builder() {
                   {!hasKey && <a className="btn btn-primary" href="/profile">Add OpenRouter key</a>}
                   {projects.length === 0 && <a className="btn btn-ghost" href="/projects">Connect a project</a>}
                 </div>
-                {/* TEMP (Phase 7a billing test) — remove after checkout verified */}
-                <div className="btn-row" style={{ marginTop: 18 }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={async () => {
-                      try {
-                        const r = await fetch("/api/billing/checkout", {
-                          method: "POST",
-                          credentials: "include",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ plan: "starter_monthly" }),
-                        });
-                        const d = await r.json();
-                        if (d.url) window.location.href = d.url;
-                        else alert("Checkout error: " + (d.error || r.status));
-                      } catch (e) {
-                        alert("Checkout failed: " + (e as Error).message);
-                      }
-                    }}
-                  >
-                    Test checkout (Starter $27)
-                  </button>
-                </div>
               </div>
             ) : (
               <>
@@ -273,30 +272,6 @@ export default function Builder() {
                   {rows.length === 0 && !busy && (
                     <div className="kb-empty" style={{ padding: "60px 14px" }}>
                       Describe what you want to build or change. The agent reads your project, makes edits through Genesis, and asks before any high-impact action.
-                      {/* TEMP (Phase 7a billing test) — remove after checkout verified */}
-                      <div style={{ marginTop: 24 }}>
-                        <button
-                          className="btn btn-ghost"
-                          style={{ width: "auto", margin: "0 auto", display: "inline-block" }}
-                          onClick={async () => {
-                            try {
-                              const r = await fetch("/api/billing/checkout", {
-                                method: "POST",
-                                credentials: "include",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ plan: "starter_monthly" }),
-                              });
-                              const d = await r.json();
-                              if (d.url) window.location.href = d.url;
-                              else alert("Checkout error: " + (d.error || r.status));
-                            } catch (e) {
-                              alert("Checkout failed: " + (e as Error).message);
-                            }
-                          }}
-                        >
-                          Test checkout (Starter $27)
-                        </button>
-                      </div>
                     </div>
                   )}
                   {rows.map((r) => (

@@ -240,3 +240,29 @@ export const admin = {
     }),
   deleteUser: (id: number) => request<{ success: true }>(`/admin/users/${id}`, { method: "DELETE" }),
 };
+
+// --- billing (V2) — Stripe subscriptions -----------------------------------
+
+export type Tier = "trial" | "starter" | "pro" | "lapsed";
+export type PlanKey = "starter_monthly" | "starter_annual" | "pro_monthly" | "pro_annual";
+
+export interface SubscriptionState {
+  tier: Tier;
+  maxProjects: number | null;
+  trialTurnsUsed: number;
+  trialTurnCap: number;
+  canStartTurn: boolean;
+  usePlatformKey: boolean;
+  statusLabel: string;
+  hasStripeCustomer: boolean;
+}
+
+export const billing = {
+  subscription: () => request<SubscriptionState>("/billing/subscription"),
+  checkout: (plan: PlanKey) =>
+    request<{ url: string }>("/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+  portal: () => request<{ url: string }>("/billing/portal", { method: "POST" }),
+};
