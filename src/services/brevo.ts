@@ -54,7 +54,7 @@ export async function sendMagicLink(email: string, link: string): Promise<void> 
   <div style="max-width: 480px; margin: 0 auto; background: #111; border: 1px solid #222; border-radius: 16px; padding: 40px;">
     <div style="text-align: center; margin-bottom: 32px;">
       <h1 style="color: #fff; font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.5px;">GenWhisperer</h1>
-      <p style="color: #888; font-size: 13px; margin: 6px 0 0;">AI Prompt Assistant</p>
+      <p style="color: #888; font-size: 13px; margin: 6px 0 0;">Genesis AI Builder</p>
     </div>
     <p style="color: #ccc; font-size: 15px; line-height: 1.6; margin: 0 0 24px;">Click the button below to sign in. This link expires in <strong style="color: #fff;">15 minutes</strong> and can only be used once.</p>
     <div style="text-align: center; margin: 32px 0;">

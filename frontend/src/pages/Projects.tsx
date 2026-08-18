@@ -86,7 +86,7 @@ export default function Projects() {
           <p className="sub">
             Connect the Genesis projects you want the agent to build for you. Each project has its
             own MCP URL + one-time token.{" "}
-            <a className="link-inline" href="/guide/genesis-project">How do I connect one?</a>
+            <a className="link-inline" href="/guide/genesis-project" target="_blank" rel="noopener noreferrer">How do I connect one?</a>
           </p>
 
           {!showAdd ? (

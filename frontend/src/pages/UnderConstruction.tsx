@@ -36,9 +36,9 @@ export default function UnderConstruction() {
         </h1>
 
         <p className="uc-sub">
-          V2 doesn't just write you a prompt to paste into Genesis — it connects directly to your
-          Genesis project and builds it for you. A real AI agent loop, grounded by the eStage
-          knowledge base, with your projects and history saved. We're shipping it now.
+          V2 connects directly to your Genesis project and builds it for you. A real AI agent
+          loop, grounded by the eStage knowledge base, with your projects and history saved.
+          We're shipping it now.
         </p>
 
         <div className="uc-status">
@@ -58,7 +58,7 @@ export default function UnderConstruction() {
               </svg>
             </div>
             <h3>Agent that builds</h3>
-            <p>An AI agent loop that runs real Genesis tool calls against your project — not a prompt to copy.</p>
+            <p>An AI agent loop that runs real Genesis tool calls against your project — it builds directly, you stay in control.</p>
           </div>
           <div className="uc-feat">
             <div className="ic">

@@ -91,9 +91,9 @@ export default function Profile() {
         <div className="card">
           <h2>OpenRouter API key</h2>
           <p className="sub">
-            Your key runs the AI model that drives the Genesis agent. It's encrypted at rest and
-            never sent to your browser.{" "}
-            <a className="link-inline" href="/guide/openrouter-key">How do I get one?</a>
+            Your key runs the AI model that builds your Genesis projects. It's encrypted at rest
+            and never sent to your browser.{" "}
+            <a className="link-inline" href="/guide/openrouter-key" target="_blank" rel="noopener noreferrer">How do I get one?</a>
           </p>
 
           {hasKey ? (

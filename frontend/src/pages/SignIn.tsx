@@ -50,7 +50,7 @@ export default function SignIn() {
             <button className="btn btn-primary" onClick={submit} disabled={busy}>
               {busy ? <span className="spin" /> : "Send sign-in link"}
             </button>
-            <p className="auth-foot">By continuing you agree to use GenWhisperer to craft Genesis prompts. We email you a link that expires in 15 minutes.</p>
+            <p className="auth-foot">By continuing you agree to use GenWhisperer to build and edit Genesis projects. We email you a link that expires in 15 minutes.</p>
           </>
         ) : (
           <>
