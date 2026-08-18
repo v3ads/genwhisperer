@@ -243,6 +243,29 @@ export default function Builder() {
                   {!hasKey && <a className="btn btn-primary" href="/profile">Add OpenRouter key</a>}
                   {projects.length === 0 && <a className="btn btn-ghost" href="/projects">Connect a project</a>}
                 </div>
+                {/* TEMP (Phase 7a billing test) — remove after checkout verified */}
+                <div className="btn-row" style={{ marginTop: 18 }}>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={async () => {
+                      try {
+                        const r = await fetch("/api/billing/checkout", {
+                          method: "POST",
+                          credentials: "include",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ plan: "starter_monthly" }),
+                        });
+                        const d = await r.json();
+                        if (d.url) window.location.href = d.url;
+                        else alert("Checkout error: " + (d.error || r.status));
+                      } catch (e) {
+                        alert("Checkout failed: " + (e as Error).message);
+                      }
+                    }}
+                  >
+                    Test checkout (Starter $27)
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -250,6 +273,30 @@ export default function Builder() {
                   {rows.length === 0 && !busy && (
                     <div className="kb-empty" style={{ padding: "60px 14px" }}>
                       Describe what you want to build or change. The agent reads your project, makes edits through Genesis, and asks before any high-impact action.
+                      {/* TEMP (Phase 7a billing test) — remove after checkout verified */}
+                      <div style={{ marginTop: 24 }}>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ width: "auto", margin: "0 auto", display: "inline-block" }}
+                          onClick={async () => {
+                            try {
+                              const r = await fetch("/api/billing/checkout", {
+                                method: "POST",
+                                credentials: "include",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ plan: "starter_monthly" }),
+                              });
+                              const d = await r.json();
+                              if (d.url) window.location.href = d.url;
+                              else alert("Checkout error: " + (d.error || r.status));
+                            } catch (e) {
+                              alert("Checkout failed: " + (e as Error).message);
+                            }
+                          }}
+                        >
+                          Test checkout (Starter $27)
+                        </button>
+                      </div>
                     </div>
                   )}
                   {rows.map((r) => (
