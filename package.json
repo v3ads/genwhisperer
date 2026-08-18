@@ -1,7 +1,7 @@
 {
   "name": "genwhisperer",
   "version": "1.0.0",
-  "description": "GenWhisperer — AI prompt assistant SaaS for Genesis/E-Stage users",
+  "description": "GenWhisperer V2 — secure SaaS that runs a server-side AI agent loop over the eStage Genesis MCP gateway, OpenRouter, and the eStage KB to build/edit Genesis projects from natural language.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
