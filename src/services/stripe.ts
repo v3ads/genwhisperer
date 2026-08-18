@@ -71,14 +71,23 @@ export async function createCheckoutSession(opts: {
   return { url: session.url! };
 }
 
-/** Create a Customer Portal session so the user can manage their subscription. */
+/**
+ * Create a Customer Portal session so the user can manage their subscription.
+ *
+ * STRIPE_PORTAL_CONFIGURATION_ID selects a product-specific Customer Portal
+ * configuration. This prevents customers from seeing unrelated products when
+ * the Stripe account serves multiple applications. If it is absent (such as in
+ * a legacy sandbox), Stripe uses the account default configuration.
+ */
 export async function createPortalSession(opts: {
   customerId: string;
 }): Promise<{ url: string }> {
   const s = stripe();
+  const configuration = process.env.STRIPE_PORTAL_CONFIGURATION_ID;
   const session = await s.billingPortal.sessions.create({
     customer: opts.customerId,
     return_url: `${process.env.APP_URL ?? "https://www.genwhisperer.com"}/billing`,
+    ...(configuration ? { configuration } : {}),
   });
   return { url: session.url };
 }
