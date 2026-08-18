@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./lib/auth";
 import { RequireAuth, RequireAdmin } from "./components/Guards";
-import UnderConstruction from "./pages/UnderConstruction";
+import Landing from "./pages/Landing";
 import SignIn from "./pages/SignIn";
 import Verify from "./pages/Verify";
 import GuideOpenRouterKey from "./pages/GuideOpenRouterKey";
@@ -19,10 +19,8 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* V2 build gate: landing replaced with a coming-soon page.
-             Auth + API routes stay live so magic-link sign-in and
-             /api/health keep working. Rollback to v1 = deploy v1-final. */}
-          <Route path="/" element={<UnderConstruction />} />
+          {/* V2 public landing — the final ship (replaces the under-construction gate). */}
+          <Route path="/" element={<Landing />} />
           <Route path="/sign-in" element={<SignIn />} />
           <Route path="/auth/verify" element={<Verify />} />
           {/* Public guides — linked from Profile + Projects */}
