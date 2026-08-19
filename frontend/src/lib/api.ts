@@ -181,6 +181,11 @@ export const agent = {
   conversations: () => request<{ conversations: ConversationSummary[] }>("/agent/conversations"),
   getConversation: (id: number) => request<ConversationDetail>(`/agent/conversations/${id}`),
   deleteConversation: (id: number) => request<void>(`/agent/conversations/${id}`, { method: "DELETE" }),
+  renameConversation: (id: number, title: string) =>
+    request<{ success: true; title: string }>(`/agent/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   approveGate: (gateId: string, approved: boolean) =>
     request<{ success: true; approved: boolean }>(`/agent/approve/${gateId}`, {
       method: "POST",
@@ -239,7 +244,39 @@ export const admin = {
       body: JSON.stringify({ suspended }),
     }),
   deleteUser: (id: number) => request<{ success: true }>(`/admin/users/${id}`, { method: "DELETE" }),
+  usage: (days = 30) =>
+    request<UsageRollup>(`/admin/usage?days=${days}`),
+  userUsage: (userId: number, days = 30) =>
+    request<UserUsage>(`/admin/usage/${userId}?days=${days}`),
 };
+
+// --- admin usage types (V2 — per-tenant cost analytics, #2) --------------------
+
+export interface UsageRow {
+  email?: string;
+  model?: string;
+  turns: number;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
+export interface UsageRollup {
+  days: number;
+  since: string;
+  totalTurns: number;
+  totalCostUsd: number;
+  perUser: Array<Omit<UsageRow, "model"> & { userId: number }>;
+  perModel: Array<Omit<UsageRow, "email" | "promptTokens" | "completionTokens">>;
+}
+export interface UserUsage {
+  userId: number;
+  days: number;
+  since: string;
+  totalTurns: number;
+  totalCostUsd: number;
+  byModel: Array<Omit<UsageRow, "email" | "promptTokens" | "completionTokens">>;
+  recent: Array<Omit<UsageRow, "email"> & { id: number; role: string; createdAt: string }>;
+}
 
 // --- billing (V2) — Stripe subscriptions -----------------------------------
 

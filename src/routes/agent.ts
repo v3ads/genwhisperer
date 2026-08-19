@@ -35,6 +35,7 @@ import {
   loadHistory,
   getConversation,
   deleteConversation,
+  renameConversation,
 } from "../services/history.js";
 import { logSessionToAITable, type ChatMessage as AitableChatMessage } from "../services/aitable.js";
 import { z } from "zod";
@@ -248,6 +249,30 @@ router.get("/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
       createdAt: m.createdAt.toISOString(),
     })),
   });
+});
+
+// ─── PATCH /api/agent/conversations/:id ───────────────────────────────────────
+// Rename a conversation (title in body). Ownership-checked.
+router.patch("/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "Invalid conversation id" });
+    return;
+  }
+  const schema = z.object({ title: z.string().min(1).max(200) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Title must be 1–200 characters." });
+    return;
+  }
+  const userId = req.user!.id;
+  const conv = await getConversation(id, userId);
+  if (!conv) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+  await renameConversation(id, userId, parsed.data.title);
+  res.json({ success: true, title: parsed.data.title });
 });
 
 // ─── DELETE /api/agent/conversations/:id ───────────────────────────────────────

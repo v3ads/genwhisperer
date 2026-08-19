@@ -41,6 +41,18 @@ export default function Conversations() {
     nav(`/builder?project=${projectId}&conversation=${id}`);
   }
 
+  async function rename(id: number, currentTitle: string) {
+    const t = prompt("Rename conversation:", currentTitle);
+    if (!t || !t.trim()) return;
+    setErr(null);
+    try {
+      await agentApi.renameConversation(id, t.trim().slice(0, 200));
+      setList((l) => l.map((c) => (c.id === id ? { ...c, title: t.trim().slice(0, 200) } : c)));
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not rename conversation.");
+    }
+  }
+
   function fmt(iso: string): string {
     try {
       const d = new Date(iso);
@@ -72,6 +84,7 @@ export default function Conversations() {
                   <div className="s">project {c.genesisProjectId} · {c.model} · updated {fmt(c.updatedAt)}</div>
                 </div>
                 <div className="actions">
+                  <button onClick={() => rename(c.id, c.title)}>Rename</button>
                   <button onClick={() => resume(c.id, c.genesisProjectId)}>Resume</button>
                   <button className="danger" onClick={() => del(c.id)}>Delete</button>
                 </div>

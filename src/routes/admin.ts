@@ -5,6 +5,8 @@
  *   GET  /api/admin/users/:id/projects          A user's Genesis projects (masked tokens)
  *   GET  /api/admin/users/:id/conversations     A user's conversations
  *   GET  /api/admin/conversations/:id           Any conversation's full message history (admin override)
+ *   GET  /api/admin/usage                      Per-tenant usage/cost rollup (by user, by model)
+ *   GET  /api/admin/usage/:userId              A single user's usage/cost (by model, recent)
  *   PATCH /api/admin/users/:id/suspend          Suspend/unsuspend a user
  *   DELETE /api/admin/users/:id                 Delete a user (cascades to projects/conversations)
  *
@@ -13,7 +15,7 @@
  */
 
 import { Router } from "express";
-import { eq, desc, count } from "drizzle-orm";
+import { eq, desc, count, sum, and, gte } from "drizzle-orm";
 import {
   db,
   users,
@@ -164,6 +166,126 @@ router.delete("/users/:id", async (req: AuthRequest, res) => {
   }
   await db.delete(users).where(eq(users.id, id));
   res.json({ success: true });
+});
+
+// ─── GET /api/admin/usage ──────────────────────────────────────────────────────
+// Per-tenant usage/cost rollup. Aggregates messages.cost_usd + tokens per user
+// (messages join conversations → users for email), optional ?days=N window (default 30).
+router.get("/usage", async (req: AuthRequest, res) => {
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "30"), 10) || 30, 1), 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Per-user totals: messages → conversations → users (owner email).
+  const perUser = await db
+    .select({
+      userId: conversations.userId,
+      email: users.email,
+      turns: count(),
+      promptTokens: sum(messages.promptTokens),
+      completionTokens: sum(messages.completionTokens),
+      costUsd: sum(messages.costUsd),
+    })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .innerJoin(users, eq(conversations.userId, users.id))
+    .where(gte(messages.createdAt, since))
+    .groupBy(conversations.userId, users.email)
+    .orderBy(desc(sum(messages.costUsd)));
+
+  // Per-model totals (which models are burning the cost). model lives on conversations.
+  const perModel = await db
+    .select({
+      model: conversations.model,
+      turns: count(),
+      costUsd: sum(messages.costUsd),
+    })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .where(gte(messages.createdAt, since))
+    .groupBy(conversations.model)
+    .orderBy(desc(sum(messages.costUsd)));
+
+  const totalCost = perUser.reduce((a, r) => a + Number(r.costUsd ?? 0), 0);
+  const totalTurns = perUser.reduce((a, r) => a + Number(r.turns ?? 0), 0);
+
+  res.json({
+    days,
+    since: since.toISOString(),
+    totalTurns,
+    totalCostUsd: totalCost,
+    perUser: perUser.map((r) => ({
+      userId: r.userId,
+      email: r.email,
+      turns: Number(r.turns ?? 0),
+      promptTokens: Number(r.promptTokens ?? 0),
+      completionTokens: Number(r.completionTokens ?? 0),
+      costUsd: Number(r.costUsd ?? 0),
+    })),
+    perModel: perModel.map((r) => ({
+      model: r.model,
+      turns: Number(r.turns ?? 0),
+      costUsd: Number(r.costUsd ?? 0),
+    })),
+  });
+});
+
+// ─── GET /api/admin/usage/:userId ──────────────────────────────────────────────
+// A single user's usage/cost (by model, recent turns first), optional ?days=N.
+// Joins messages → conversations to scope by user.
+router.get("/usage/:userId", async (req: AuthRequest, res) => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (Number.isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "30"), 10) || 30, 1), 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const byModel = await db
+    .select({ model: conversations.model, turns: count(), costUsd: sum(messages.costUsd) })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .where(and(eq(conversations.userId, userId), gte(messages.createdAt, since)))
+    .groupBy(conversations.model)
+    .orderBy(desc(sum(messages.costUsd)));
+
+  const recent = await db
+    .select({
+      id: messages.id,
+      model: conversations.model,
+      role: messages.role,
+      costUsd: messages.costUsd,
+      promptTokens: messages.promptTokens,
+      completionTokens: messages.completionTokens,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+    .where(and(eq(conversations.userId, userId), gte(messages.createdAt, since)))
+    .orderBy(desc(messages.createdAt))
+    .limit(50);
+
+  const totalCost = byModel.reduce((a, r) => a + Number(r.costUsd ?? 0), 0);
+  const totalTurns = byModel.reduce((a, r) => a + Number(r.turns ?? 0), 0);
+
+  res.json({
+    userId,
+    days,
+    since: since.toISOString(),
+    totalTurns,
+    totalCostUsd: totalCost,
+    byModel: byModel.map((r) => ({
+      model: r.model,
+      turns: Number(r.turns ?? 0),
+      costUsd: Number(r.costUsd ?? 0),
+    })),
+    recent: recent.map((r) => ({
+      id: r.id,
+      model: r.model,
+      role: r.role,
+      costUsd: Number(r.costUsd ?? 0),
+      promptTokens: Number(r.promptTokens ?? 0),
+      completionTokens: Number(r.completionTokens ?? 0),
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
 });
 
 export default router;

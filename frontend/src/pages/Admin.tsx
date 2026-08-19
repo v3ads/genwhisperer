@@ -7,6 +7,7 @@ import {
   type AdminProject,
   type AdminConversation,
   type HistoryMessage,
+  type UserUsage,
 } from "../lib/api";
 import { mdToHtml } from "../lib/mdToHtml";
 import "./Admin.css";
@@ -26,6 +27,7 @@ export default function Admin() {
   const [conversations, setConversations] = useState<AdminConversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UserUsage | null>(null);
 
   // conversation reader overlay state
   const [readerConv, setReaderConv] = useState<{ id: number; title: string } | null>(null);
@@ -45,12 +47,14 @@ export default function Admin() {
   const loadDetail = useCallback(async (id: number) => {
     setErr(null);
     try {
-      const [p, c] = await Promise.all([
+      const [p, c, u] = await Promise.all([
         adminApi.userProjects(id),
         adminApi.userConversations(id),
+        adminApi.userUsage(id),
       ]);
       setProjects(p.projects);
       setConversations(c.conversations);
+      setUsage(u);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not load user detail.");
     }
@@ -58,7 +62,7 @@ export default function Admin() {
 
   useEffect(() => {
     if (selectedId) void loadDetail(selectedId);
-    else { setProjects([]); setConversations([]); }
+    else { setProjects([]); setConversations([]); setUsage(null); }
   }, [selectedId, loadDetail]);
 
   async function openConversation(c: AdminConversation) {
@@ -195,6 +199,48 @@ export default function Admin() {
                           <div className="s">{c.model} · {fmt(c.updatedAt)}</div>
                         </div>
                       ))
+                    )}
+                  </div>
+                  {/* Usage / cost analytics (#2) */}
+                  <div className="ad-section">
+                    <h3>Usage &amp; cost ({usage?.days ?? 30}d)</h3>
+                    {usage ? (
+                      <>
+                        <div className="list-row" style={{ marginBottom: 14 }}>
+                          <div className="meta">
+                            <div className="t">${usage.totalCostUsd.toFixed(4)} total · {usage.totalTurns} turns</div>
+                            <div className="s">since {fmt(usage.since)}</div>
+                          </div>
+                        </div>
+                        {usage.byModel.length > 0 && (
+                          <div style={{ marginTop: 6 }}>
+                            <div className="s" style={{ marginBottom: 6 }}>By model</div>
+                            {usage.byModel.map((m) => (
+                              <div className="list-row" key={m.model} style={{ padding: "10px 14px", marginBottom: 6 }}>
+                                <div className="meta">
+                                  <div className="t mono" style={{ fontSize: 13.5 }}>{m.model}</div>
+                                  <div className="s">{m.turns} turns · ${m.costUsd.toFixed(4)}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {usage.recent.length > 0 && (
+                          <div style={{ marginTop: 10 }}>
+                            <div className="s" style={{ marginBottom: 6 }}>Recent turns</div>
+                            {usage.recent.slice(0, 8).map((r) => (
+                              <div className="list-row" key={r.id} style={{ padding: "10px 14px", marginBottom: 6 }}>
+                                <div className="meta">
+                                  <div className="t mono" style={{ fontSize: 13 }}>{r.role} · {r.model}</div>
+                                  <div className="s">${r.costUsd.toFixed(4)} · {fmt(r.createdAt)}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="ad-empty">No usage in this window.</div>
                     )}
                   </div>
                 </div>
