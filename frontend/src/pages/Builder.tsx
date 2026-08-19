@@ -125,6 +125,7 @@ export default function Builder() {
     if (!text || busy || !projectId) return;
     setInput("");
     setBusy(true);
+    setHint("Initiating your request…");
     addRow("user", text);
 
     const ctrl = new AbortController();
@@ -281,8 +282,8 @@ export default function Builder() {
                     </div>
                   ))}
                   {busy && (
-                    <div className="thinking">
-                      Thinking<span className="dots">.</span><span className="dots">.</span><span className="dots">.</span>
+                    <div className="thinking" aria-live="polite">
+                      {hint}
                     </div>
                   )}
                   {gates.map((g) => (

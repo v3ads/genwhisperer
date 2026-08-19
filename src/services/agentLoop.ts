@@ -44,6 +44,29 @@ import {
 
 const MAX_ITERATIONS = 14;
 
+/** Convert a model ID into a short, human-friendly progress label. */
+function friendlyModelName(model: string): string {
+  const normalized = model.toLowerCase();
+  if (normalized.includes("kimi")) return "Kimi";
+  if (normalized.includes("gemini")) return "Gemini";
+  if (normalized.includes("claude")) return "Claude";
+  if (normalized.includes("gpt")) return "GPT";
+  return "Your AI";
+}
+
+/** Keep internal tool names out of user-facing agent progress. */
+function friendlyToolStatus(toolName: string): string {
+  const normalized = toolName.toLowerCase();
+  if (normalized === "genesis_context") return "Reviewing your Genesis project…";
+  if (normalized.includes("read") || normalized.includes("list") || normalized.includes("get") || normalized.includes("search")) {
+    return "Reviewing project details…";
+  }
+  if (normalized.includes("write") || normalized.includes("edit") || normalized.includes("create") || normalized.includes("update") || normalized.includes("delete")) {
+    return "Preparing changes in Genesis…";
+  }
+  return "Communicating with Genesis…";
+}
+
 /** SSE event the loop emits to the browser. */
 export type AgentEvent =
   | { type: "status"; text: string }
@@ -152,7 +175,7 @@ export async function runAgentLoop(
 
   try {
     // ── 1. Connect to Genesis + discover the live tool set ──────────────────
-    safeEmit({ type: "status", text: "Connecting to Genesis…" });
+    safeEmit({ type: "status", text: "Communicating with Genesis…" });
     const mcp = new GenesisMcpClient(input.mcpUrl, input.genesisToken);
     let genesisTools: McpTool[] = [];
     try {
@@ -183,7 +206,7 @@ export async function runAgentLoop(
     if (!contextText) {
       // Try to read genesis_context if the project exposes it.
       if (genesisTools.some((t) => t.name === "genesis_context")) {
-        safeEmit({ type: "status", text: "Reading project context…" });
+        safeEmit({ type: "status", text: "Reviewing your project context…" });
         try {
           const ctx = await mcp.callTool("genesis_context", {});
           contextText = ctx.text;
@@ -247,7 +270,7 @@ export async function runAgentLoop(
         stopped = true;
         break;
       }
-      safeEmit({ type: "status", text: "Thinking…" });
+      safeEmit({ type: "status", text: `${friendlyModelName(input.model)} is formulating a plan…` });
 
       let resp;
       try {
@@ -316,7 +339,7 @@ export async function runAgentLoop(
             args = {};
           }
           toolCallCount += 1;
-          safeEmit({ type: "status", text: `Running: ${fn.name}` });
+          safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
 
           const resultText = await executeToolCall(
             fn.name,
