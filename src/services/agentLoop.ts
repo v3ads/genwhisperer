@@ -35,6 +35,7 @@ import {
 import { kbAsk } from "./estageKb.js";
 import { genesisToolsToOrTools, needsConfirmation } from "../config/genesisTools.js";
 import { buildSystemPrompt } from "../config/systemPrompt.js";
+import { logAgentLaunch } from "../utils/launchObservability.js";
 import {
   appendMessage,
   createConversation,
@@ -121,6 +122,8 @@ export function cancelGatesFor(gateIds: string[]): void {
 
 /** The credentials + context needed to run the loop. */
 export interface AgentRunInput {
+  /** Correlates route, agent loop, OpenRouter, and Genesis lifecycle logs. */
+  requestId: string;
   userId: number;
   /** Existing conversation id to resume, or null to create a new one. */
   conversationId: number | null;
@@ -172,15 +175,26 @@ export async function runAgentLoop(
   const safeEmit = (ev: AgentEvent) => {
     if (!sink.closed()) sink.emit(ev);
   };
+  const launchBase = {
+    requestId: input.requestId,
+    userId: input.userId,
+    projectId: input.genesisProjectId,
+    conversationId,
+    model: input.model,
+  };
+  const runStartedAt = Date.now();
 
   try {
     // ── 1. Connect to Genesis + discover the live tool set ──────────────────
     safeEmit({ type: "status", text: "Communicating with Genesis…" });
+    logAgentLaunch({ ...launchBase, event: "genesis_connect_started" });
     const mcp = new GenesisMcpClient(input.mcpUrl, input.genesisToken);
     let genesisTools: McpTool[] = [];
     try {
       genesisTools = await mcp.listTools();
+      logAgentLaunch({ ...launchBase, event: "genesis_connect_succeeded", toolCount: genesisTools.length, durationMs: Date.now() - runStartedAt });
     } catch (e) {
+      logAgentLaunch({ ...launchBase, event: "genesis_connect_failed", durationMs: Date.now() - runStartedAt, errorName: (e as Error).name, errorMessage: (e as Error).message });
       const err = e as Error & { code?: number };
       if (err.code === 401) {
         throw new Error(
@@ -207,10 +221,13 @@ export async function runAgentLoop(
       // Try to read genesis_context if the project exposes it.
       if (genesisTools.some((t) => t.name === "genesis_context")) {
         safeEmit({ type: "status", text: "Reviewing your project context…" });
+        logAgentLaunch({ ...launchBase, event: "genesis_context_started", durationMs: Date.now() - runStartedAt });
         try {
           const ctx = await mcp.callTool("genesis_context", {});
           contextText = ctx.text;
-        } catch {
+          logAgentLaunch({ ...launchBase, event: "genesis_context_succeeded", durationMs: Date.now() - runStartedAt });
+        } catch (e) {
+          logAgentLaunch({ ...launchBase, event: "genesis_context_failed", durationMs: Date.now() - runStartedAt, errorName: (e as Error).name, errorMessage: (e as Error).message });
           /* non-fatal — the model can fetch it itself */
         }
       }
@@ -279,6 +296,7 @@ export async function runAgentLoop(
           model: input.model,
           messages,
           tools,
+          observability: launchBase,
         });
       } catch (e) {
         const err = e as Error & { name?: string };
@@ -340,6 +358,7 @@ export async function runAgentLoop(
           }
           toolCallCount += 1;
           safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
+          logAgentLaunch({ ...launchBase, event: "tool_started", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
 
           const resultText = await executeToolCall(
             fn.name,
@@ -349,6 +368,7 @@ export async function runAgentLoop(
             sink,
             gateIds
           );
+          logAgentLaunch({ ...launchBase, event: "tool_succeeded", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
 
           // Feed the result back to the model as a tool message.
           messages.push({
@@ -394,11 +414,16 @@ export async function runAgentLoop(
     }
   } catch (e) {
     errorMessage = (e as Error).message;
+    logAgentLaunch({ ...launchBase, event: "agent_failed", durationMs: Date.now() - runStartedAt, iterationCount: iterations, toolCount: toolCallCount, errorName: (e as Error).name, errorMessage });
     safeEmit({ type: "error", message: errorMessage });
   } finally {
     // Cancel any unresolved approval gates so they don't leak.
     cancelGatesFor(gateIds);
     safeEmit({ type: "done" });
+  }
+
+  if (!errorMessage) {
+    logAgentLaunch({ ...launchBase, event: "agent_completed", durationMs: Date.now() - runStartedAt, iterationCount: iterations, toolCount: toolCallCount });
   }
 
   return {

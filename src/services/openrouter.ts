@@ -18,6 +18,15 @@ const CHAT_MAX_ATTEMPTS = 3;
 const CHAT_RETRY_BASE_MS = 500;
 const CHAT_RETRY_MAX_MS = 4_000;
 
+import { logAgentLaunch } from "../utils/launchObservability.js";
+
+export interface OpenRouterObservabilityContext {
+  requestId: string;
+  userId?: number;
+  projectId?: number;
+  conversationId?: number | null;
+}
+
 /** A model entry from OpenRouter /models, lightly filtered + grouped. */
 export interface OrModel {
   id: string;
@@ -227,9 +236,11 @@ export async function chat(opts: {
   tools?: OrTool[];
   /** Ordered fallback model IDs; at most three are forwarded to OpenRouter. */
   fallbackModels?: string[];
+  /** Request correlation fields for launch-phase logs; never includes secrets or content. */
+  observability?: OpenRouterObservabilityContext;
   signal?: AbortSignal;
 }): Promise<ChatResult> {
-  const { apiKey, model, messages, tools, signal } = opts;
+  const { apiKey, model, messages, tools, signal, observability } = opts;
   const fallbacks = (opts.fallbackModels ?? configuredFallbackModels())
     .filter((fallback) => fallback !== model)
     .slice(0, 3);
@@ -242,6 +253,17 @@ export async function chat(opts: {
   }
 
   for (let attempt = 0; attempt < CHAT_MAX_ATTEMPTS; attempt += 1) {
+    const attemptStartedAt = Date.now();
+    logAgentLaunch({
+      requestId: observability?.requestId ?? "uncorrelated",
+      userId: observability?.userId,
+      projectId: observability?.projectId,
+      conversationId: observability?.conversationId,
+      event: "openrouter_attempt_started",
+      model,
+      attempt: attempt + 1,
+      maxAttempts: CHAT_MAX_ATTEMPTS,
+    });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
     const abort = () => ctrl.abort();
@@ -258,7 +280,23 @@ export async function chat(opts: {
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
-      if (response.ok) return (await response.json()) as ChatResult;
+      if (response.ok) {
+        const result = (await response.json()) as ChatResult & { model?: string };
+        logAgentLaunch({
+          requestId: observability?.requestId ?? "uncorrelated",
+          userId: observability?.userId,
+          projectId: observability?.projectId,
+          conversationId: observability?.conversationId,
+          event: "openrouter_attempt_succeeded",
+          model,
+          effectiveModel: result.model ?? model,
+          attempt: attempt + 1,
+          maxAttempts: CHAT_MAX_ATTEMPTS,
+          upstreamRequestId: response.headers.get("x-request-id") ?? undefined,
+          durationMs: Date.now() - attemptStartedAt,
+        });
+        return result;
+      }
 
       const status = response.status;
       const message = await errorMessage(response);
@@ -270,8 +308,39 @@ export async function chat(opts: {
         retryable,
         requestId
       );
+      const delayMs = retryAfterMs(response, attempt);
+      logAgentLaunch({
+        requestId: observability?.requestId ?? "uncorrelated",
+        userId: observability?.userId,
+        projectId: observability?.projectId,
+        conversationId: observability?.conversationId,
+        event: "openrouter_attempt_failed",
+        model,
+        attempt: attempt + 1,
+        maxAttempts: CHAT_MAX_ATTEMPTS,
+        httpStatus: status,
+        retryable,
+        upstreamRequestId: requestId,
+        durationMs: Date.now() - attemptStartedAt,
+        errorName: error.name,
+        errorMessage: error.message,
+      });
       if (!retryable || attempt === CHAT_MAX_ATTEMPTS - 1) throw error;
-      await wait(retryAfterMs(response, attempt), signal);
+      logAgentLaunch({
+        requestId: observability?.requestId ?? "uncorrelated",
+        userId: observability?.userId,
+        projectId: observability?.projectId,
+        conversationId: observability?.conversationId,
+        event: "openrouter_retry_scheduled",
+        model,
+        attempt: attempt + 1,
+        maxAttempts: CHAT_MAX_ATTEMPTS,
+        httpStatus: status,
+        retryable: true,
+        upstreamRequestId: requestId,
+        durationMs: delayMs,
+      });
+      await wait(delayMs, signal);
     } catch (e) {
       const err = e as Error;
       if (err.name === "AbortError") {
@@ -279,11 +348,41 @@ export async function chat(opts: {
       }
       const retryableNetworkError = err instanceof TypeError;
       const retryable = err instanceof OpenRouterChatError ? err.retryable : retryableNetworkError;
+      const structuredError = err instanceof OpenRouterChatError ? err : undefined;
+      logAgentLaunch({
+        requestId: observability?.requestId ?? "uncorrelated",
+        userId: observability?.userId,
+        projectId: observability?.projectId,
+        conversationId: observability?.conversationId,
+        event: "openrouter_attempt_failed",
+        model,
+        attempt: attempt + 1,
+        maxAttempts: CHAT_MAX_ATTEMPTS,
+        httpStatus: structuredError?.status,
+        retryable,
+        upstreamRequestId: structuredError?.requestId,
+        durationMs: Date.now() - attemptStartedAt,
+        errorName: err.name,
+        errorMessage: err.message,
+      });
       if (!retryable || attempt === CHAT_MAX_ATTEMPTS - 1) {
         if (err instanceof OpenRouterChatError) throw err;
         throw new OpenRouterChatError(`OpenRouter unreachable: ${err.message}`, undefined, retryable);
       }
-      await wait(Math.min(CHAT_RETRY_BASE_MS * 2 ** attempt, CHAT_RETRY_MAX_MS), signal);
+      const delayMs = Math.min(CHAT_RETRY_BASE_MS * 2 ** attempt, CHAT_RETRY_MAX_MS);
+      logAgentLaunch({
+        requestId: observability?.requestId ?? "uncorrelated",
+        userId: observability?.userId,
+        projectId: observability?.projectId,
+        conversationId: observability?.conversationId,
+        event: "openrouter_retry_scheduled",
+        model,
+        attempt: attempt + 1,
+        maxAttempts: CHAT_MAX_ATTEMPTS,
+        retryable: true,
+        durationMs: delayMs,
+      });
+      await wait(delayMs, signal);
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);

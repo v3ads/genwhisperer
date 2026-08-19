@@ -17,6 +17,7 @@
 
 import { Router } from "express";
 import type { Response } from "express";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, userApiKeys, genesisProjects } from "../db/index.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
@@ -39,12 +40,18 @@ import {
 } from "../services/history.js";
 import { logSessionToAITable, type ChatMessage as AitableChatMessage } from "../services/aitable.js";
 import { z } from "zod";
+import { logAgentLaunch } from "../utils/launchObservability.js";
 
 const router = Router();
 
 // ─── POST /api/agent/message ───────────────────────────────────────────────────
 // Start (or resume) an agent turn. Streams SSE events from the agent loop.
 router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => {
+  const requestId = randomUUID();
+  const startedAt = Date.now();
+  res.setHeader("X-Agent-Request-Id", requestId);
+  logAgentLaunch({ requestId, event: "request_received", userId: req.user!.id });
+
   const schema = z.object({
     genesisProjectId: z.number().int().positive(),
     conversationId: z.number().int().positive().optional(),
@@ -53,6 +60,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
+    logAgentLaunch({ requestId, event: "request_rejected", userId: req.user!.id, httpStatus: 400, errorName: "ValidationError" });
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
     return;
   }
@@ -64,6 +72,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   // ── Tier gate: lapsed users can't start turns; trial users hit the turn cap ──
   const tierState = await getTierState(userId);
   if (!tierState.canStartTurn) {
+    logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 402, errorName: "BillingGate" });
     res.status(402).json({
       error: tierState.statusLabel,
       tier: tierState.tier,
@@ -81,6 +90,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   if (tierState.usePlatformKey) {
     openrouterKey = process.env.OPENROUTER_PLATFORM_KEY ?? "";
     if (!openrouterKey) {
+      logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 500, errorName: "MissingPlatformKey" });
       res.status(500).json({ error: "Trial key not configured. Please contact support." });
       return;
     }
@@ -92,6 +102,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
       .where(eq(userApiKeys.userId, userId))
       .limit(1);
     if (!keyRows.length) {
+      logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 400, errorName: "MissingUserKey" });
       res
         .status(400)
         .json({ error: "No OpenRouter key saved. Add one in Profile first." });
@@ -108,6 +119,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     .where(eq(genesisProjects.id, genesisProjectId))
     .limit(1);
   if (!projRows.length || projRows[0].userId !== userId) {
+    logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 404, errorName: "ProjectNotFound" });
     res.status(404).json({ error: "Genesis project not found" });
     return;
   }
@@ -118,14 +130,18 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   if (conversationId) {
     const conv = await getConversation(conversationId, userId);
     if (!conv) {
+      logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, conversationId, httpStatus: 404, errorName: "ConversationNotFound" });
       res.status(404).json({ error: "Conversation not found" });
       return;
     }
     if (conv.genesisProjectId !== genesisProjectId) {
+      logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, conversationId, httpStatus: 400, errorName: "ConversationProjectMismatch" });
       res.status(400).json({ error: "Conversation belongs to a different project." });
       return;
     }
   }
+
+  logAgentLaunch({ requestId, event: "preflight_complete", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
 
   // ── SSE headers (must not be compressed — see index.ts compression filter) ─
   res.setHeader("Content-Type", "text/event-stream");
@@ -133,6 +149,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+  logAgentLaunch({ requestId, event: "stream_started", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
 
   // ── Sink: writes each AgentEvent as an SSE `data:` line ───────────────────
   let closed = false;
@@ -147,11 +164,13 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   };
   res.on("close", () => {
     closed = true;
+    logAgentLaunch({ requestId, event: "stream_closed", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
   });
 
   // ── Run the loop ──────────────────────────────────────────────────────────
   const result = await runAgentLoop(
     {
+      requestId,
       userId,
       conversationId,
       genesisProjectId,
@@ -163,6 +182,19 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     },
     sink
   );
+
+  logAgentLaunch({
+    requestId,
+    event: result.error ? "agent_failed" : "agent_completed",
+    userId,
+    projectId: genesisProjectId,
+    conversationId: result.conversationId,
+    model: chosenModel,
+    durationMs: Date.now() - startedAt,
+    iterationCount: result.iterations,
+    toolCount: result.toolCalls,
+    errorMessage: result.error ?? undefined,
+  });
 
   // ── Close-out: increment the trial turn counter (trial users only) ────────
   if (tierState.usePlatformKey) {
