@@ -36,6 +36,7 @@ import { kbAsk } from "./estageKb.js";
 import { genesisToolsToOrTools, needsConfirmation } from "../config/genesisTools.js";
 import { buildSystemPrompt } from "../config/systemPrompt.js";
 import { logAgentLaunch } from "../utils/launchObservability.js";
+import { guardAgentToolCall } from "../utils/agentToolGuard.js";
 import {
   appendMessage,
   createConversation,
@@ -56,21 +57,6 @@ function friendlyModelName(model: string): string {
 }
 
 /** Keep internal tool names out of user-facing agent progress. */
-function fileWriteValidationError(toolName: string, args: Record<string, unknown>): string | null {
-  if (!toolName.toLowerCase().endsWith("write_file")) return null;
-  if (typeof args.path !== "string" || !args.path.trim()) return "A file path is required before Genesis can write a file.";
-  if (typeof args.content !== "string" || !args.content.trim()) return "The file content is missing, so Genesis cannot write this file safely.";
-  return null;
-}
-
-function toolCallKey(toolName: string, args: Record<string, unknown>): string {
-  try {
-    return `${toolName}:${JSON.stringify(args)}`;
-  } catch {
-    return toolName;
-  }
-}
-
 function friendlyToolStatus(toolName: string): string {
   const normalized = toolName.toLowerCase();
   if (normalized === "genesis_context") return "Reviewing your Genesis project…";
@@ -378,25 +364,16 @@ export async function runAgentLoop(
           } catch {
             args = {};
           }
-          const validationError = fileWriteValidationError(fn.name, args);
-          if (validationError) {
-            errorMessage = `I couldn’t complete that file update: ${validationError} No changes were made.`;
-            logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: "InvalidToolArguments", errorMessage: validationError });
+          const toolGuard = guardAgentToolCall(toolCallAttempts, fn.name, args);
+          if (!toolGuard.allowed) {
+            errorMessage = toolGuard.errorName === "InvalidToolArguments"
+              ? `I couldn’t complete that file update: ${toolGuard.message} No changes were made.`
+              : toolGuard.message;
+            logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: toolGuard.errorName, errorMessage: toolGuard.message });
             safeEmit({ type: "error", message: errorMessage });
             stopped = true;
             break;
           }
-
-          const callKey = toolCallKey(fn.name, args);
-          const priorAttempts = toolCallAttempts.get(callKey) ?? 0;
-          if (priorAttempts >= 1) {
-            errorMessage = "I couldn’t complete a Genesis operation after a corrected attempt. I stopped here to avoid repeating the same change.";
-            logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: "DuplicateToolCallBlocked", errorMessage });
-            safeEmit({ type: "error", message: errorMessage });
-            stopped = true;
-            break;
-          }
-          toolCallAttempts.set(callKey, priorAttempts + 1);
 
           toolCallCount += 1;
           safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
