@@ -59,6 +59,7 @@ export default function Builder() {
   const [cost, setCost] = useState(0);
   const [kbQuery, setKbQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
 
   // ── Load profile + projects on mount ──────────────────────────────────────
@@ -131,6 +132,7 @@ export default function Builder() {
     addRow("user", text);
 
     const ctrl = new AbortController();
+    const turnCostBase = sessionCostRef.current;
     abortRef.current = ctrl;
 
     try {
@@ -140,7 +142,11 @@ export default function Builder() {
           onStatus: (t) => setHint(t),
           onNarration: (t) => addRow("narration", t),
           onConversation: (id) => setConversationId(id),
-          onCost: (c) => setCost(c),
+          onCost: (c) => {
+            const runningSessionCost = turnCostBase + c;
+            sessionCostRef.current = runningSessionCost;
+            setCost(runningSessionCost);
+          },
           onToolApprovalRequest: (gateId, tool, args) =>
             setGates((g) => [...g, { gateId, tool, args }]),
           onKbAnswer: (q, a, sources) =>
@@ -221,7 +227,7 @@ export default function Builder() {
           <select
             className="proj-sel"
             value={projectId}
-            onChange={(e) => { setProjectId(Number(e.target.value)); setRows([]); setConversationId(null); setCost(0); }}
+            onChange={(e) => { setProjectId(Number(e.target.value)); setRows([]); setConversationId(null); sessionCostRef.current = 0; setCost(0); }}
             disabled={busy}
           >
             {projects.length === 0 && <option value="">No projects</option>}
@@ -240,7 +246,8 @@ export default function Builder() {
               {restModels.map((m) => <option key={m.id} value={m.id}>{opt(m)}</option>)}
             </optgroup>
           </select>
-          <span className={`cost-badge ${costClass}`} title="Running OpenRouter cost this session">
+          <span className={`cost-badge ${costClass}`} title="Running total for this Builder session, including every instruction and agent turn">
+            <span className="session-cost-label">Session</span>
             <span className="coin">$</span>{cost.toFixed(4)}
           </span>
           {/* Trial-turn indicator / lapsed / upgrade prompt */}

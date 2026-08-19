@@ -35,6 +35,7 @@
   background:var(--navy-1);color:var(--teal);
 }
 .cost-badge .coin{color:#f5b454;}
+.cost-badge .session-cost-label{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-faint);}
 .cost-badge.warn{color:var(--warn);border-color:#f5b45455;}
 .cost-badge.high{color:var(--danger);border-color:#f06b6b55;}
 
