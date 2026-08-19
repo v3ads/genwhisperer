@@ -14,6 +14,9 @@ const OR_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const OR_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODELS_TIMEOUT_MS = 15_000;
 const CHAT_TIMEOUT_MS = 120_000;
+const CHAT_MAX_ATTEMPTS = 3;
+const CHAT_RETRY_BASE_MS = 500;
+const CHAT_RETRY_MAX_MS = 4_000;
 
 /** A model entry from OpenRouter /models, lightly filtered + grouped. */
 export interface OrModel {
@@ -152,68 +155,142 @@ export async function fetchModels(apiKey: string): Promise<OrModel[]> {
   return rec.concat(rest);
 }
 
+/** A classified OpenRouter failure suitable for retry decisions and safe logs. */
+export class OpenRouterChatError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly retryable = false,
+    readonly requestId?: string
+  ) {
+    super(message);
+    this.name = "OpenRouterChatError";
+  }
+}
+
+function configuredFallbackModels(): string[] {
+  return (process.env.OPENROUTER_FALLBACK_MODELS ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function retryAfterMs(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+    const dateMs = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateMs) && dateMs > 0) return dateMs;
+  }
+  const exponential = Math.min(CHAT_RETRY_BASE_MS * 2 ** attempt, CHAT_RETRY_MAX_MS);
+  return exponential + Math.floor(Math.random() * 250);
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error("OpenRouter chat aborted."), { name: "AbortError" }));
+    }, { once: true });
+  });
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string };
+    return parsed.error?.message || parsed.message || `HTTP ${response.status}`;
+  } catch {
+    return raw.slice(0, 400) || `HTTP ${response.status}`;
+  }
+}
+
 /**
- * Run a (non-streaming) OpenRouter chat completion with native function-calling.
- * The agent loop calls this repeatedly: it returns either a final text answer
- * or tool_calls to execute. parallel_tool_calls is disabled — sequential
- * Genesis ops are safer for an agent editing a live project.
+ * Run a non-streaming OpenRouter completion with native function-calling.
  *
- * `signal` (optional) lets the caller abort a long call (e.g. user Stop).
+ * Transient network and availability failures are retried at most twice after
+ * the initial request. OpenRouter's native `models` routing is used only when
+ * OPENROUTER_FALLBACK_MODELS or opts.fallbackModels is explicitly configured;
+ * this preserves a tenant's selected model by default.
  */
 export async function chat(opts: {
   apiKey: string;
   model: string;
   messages: ChatMessage[];
   tools?: OrTool[];
+  /** Ordered fallback model IDs; at most three are forwarded to OpenRouter. */
+  fallbackModels?: string[];
   signal?: AbortSignal;
 }): Promise<ChatResult> {
   const { apiKey, model, messages, tools, signal } = opts;
+  const fallbacks = (opts.fallbackModels ?? configuredFallbackModels())
+    .filter((fallback) => fallback !== model)
+    .slice(0, 3);
   const body: Record<string, unknown> = { model, messages, temperature: 0.3 };
+  if (fallbacks.length) body.models = [model, ...fallbacks];
   if (tools && tools.length) {
     body.tools = tools;
     body.tool_choice = "auto";
     body.parallel_tool_calls = false;
   }
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
-  if (signal) {
+  for (let attempt = 0; attempt < CHAT_MAX_ATTEMPTS; attempt += 1) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), CHAT_TIMEOUT_MS);
+    const abort = () => ctrl.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+
     try {
-      signal.addEventListener("abort", () => ctrl.abort());
-    } catch {
-      /* no-op */
+      const response = await fetch(OR_CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "X-Title": "GenWhisperer V2",
+        },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      if (response.ok) return (await response.json()) as ChatResult;
+
+      const status = response.status;
+      const message = await errorMessage(response);
+      const requestId = response.headers.get("x-request-id") ?? undefined;
+      const retryable = isRetryableStatus(status);
+      const error = new OpenRouterChatError(
+        `OpenRouter HTTP ${status}: ${message}`,
+        status,
+        retryable,
+        requestId
+      );
+      if (!retryable || attempt === CHAT_MAX_ATTEMPTS - 1) throw error;
+      await wait(retryAfterMs(response, attempt), signal);
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === "AbortError") {
+        throw Object.assign(new Error("OpenRouter chat aborted."), { name: "AbortError" });
+      }
+      const retryableNetworkError = err instanceof TypeError;
+      const retryable = err instanceof OpenRouterChatError ? err.retryable : retryableNetworkError;
+      if (!retryable || attempt === CHAT_MAX_ATTEMPTS - 1) {
+        if (err instanceof OpenRouterChatError) throw err;
+        throw new OpenRouterChatError(`OpenRouter unreachable: ${err.message}`, undefined, retryable);
+      }
+      await wait(Math.min(CHAT_RETRY_BASE_MS * 2 ** attempt, CHAT_RETRY_MAX_MS), signal);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
     }
   }
 
-  let r: Response;
-  try {
-    r = await fetch(OR_CHAT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "X-Title": "GenWhisperer V2",
-      },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-  } catch (e) {
-    clearTimeout(timer);
-    const err = e as Error;
-    if (err.name === "AbortError") {
-      throw Object.assign(new Error("OpenRouter chat aborted."), { name: "AbortError" });
-    }
-    throw new Error(`OpenRouter unreachable: ${err.message}`);
-  }
-  clearTimeout(timer);
-  if (r.status === 401) {
-    throw Object.assign(new Error("OpenRouter 401: invalid API key."), { code: 401 });
-  }
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`OpenRouter HTTP ${r.status}: ${t.slice(0, 400)}`);
-  }
-  return (await r.json()) as ChatResult;
+  throw new OpenRouterChatError("OpenRouter retry loop ended unexpectedly.");
 }
 
 /**
