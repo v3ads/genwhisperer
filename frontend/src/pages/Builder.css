@@ -172,3 +172,16 @@
   .b-messages{padding:16px 14px;}
   .msg{max-width:96%;}
 }
+
+/* Dismiss controls keep transient Builder notices and confirmations removable. */
+.msg,.gate{position:relative;}
+.msg-close{
+  position:absolute;top:10px;right:10px;width:26px;height:26px;display:inline-grid;place-items:center;
+  border:1px solid rgba(148,163,184,.32);border-radius:7px;background:rgba(15,23,42,.82);
+  color:#cbd5e1;font-size:19px;line-height:1;cursor:pointer;
+  transition:background .14s ease,border-color .14s ease,color .14s ease;
+}
+.msg-close:hover{background:rgba(51,65,85,.96);border-color:rgba(125,211,252,.7);color:#fff;}
+.msg-close:focus-visible{outline:2px solid #38bdf8;outline-offset:2px;}
+.gate-close{position:static;margin-left:auto;}
+.msg.narration .bubble,.msg.error .bubble{padding-right:38px;}

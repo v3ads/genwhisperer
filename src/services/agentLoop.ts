@@ -56,6 +56,21 @@ function friendlyModelName(model: string): string {
 }
 
 /** Keep internal tool names out of user-facing agent progress. */
+function fileWriteValidationError(toolName: string, args: Record<string, unknown>): string | null {
+  if (!toolName.toLowerCase().endsWith("write_file")) return null;
+  if (typeof args.path !== "string" || !args.path.trim()) return "A file path is required before Genesis can write a file.";
+  if (typeof args.content !== "string" || !args.content.trim()) return "The file content is missing, so Genesis cannot write this file safely.";
+  return null;
+}
+
+function toolCallKey(toolName: string, args: Record<string, unknown>): string {
+  try {
+    return `${toolName}:${JSON.stringify(args)}`;
+  } catch {
+    return toolName;
+  }
+}
+
 function friendlyToolStatus(toolName: string): string {
   const normalized = toolName.toLowerCase();
   if (normalized === "genesis_context") return "Reviewing your Genesis project…";
@@ -166,6 +181,7 @@ export async function runAgentLoop(
   let totalCost = 0;
   let iterations = 0;
   let toolCallCount = 0;
+  const toolCallAttempts = new Map<string, number>();
   let stopped = false;
   let errorMessage: string | null = null;
   let finalAnswer = "";
@@ -335,8 +351,8 @@ export async function runAgentLoop(
       assistantToolCalls = msg.tool_calls || null;
 
       if (msg.tool_calls && msg.tool_calls.length) {
-        // Optional preamble narration.
-        if (msg.content) safeEmit({ type: "narration", text: msg.content });
+        // Model preambles are retained in history but not rendered live: raw
+        // self-correction text is not a useful customer-facing progress signal.
 
         // Persist the assistant turn (with tool_calls) before executing them.
         await appendMessage({
@@ -362,6 +378,26 @@ export async function runAgentLoop(
           } catch {
             args = {};
           }
+          const validationError = fileWriteValidationError(fn.name, args);
+          if (validationError) {
+            errorMessage = `I couldn’t complete that file update: ${validationError} No changes were made.`;
+            logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: "InvalidToolArguments", errorMessage: validationError });
+            safeEmit({ type: "error", message: errorMessage });
+            stopped = true;
+            break;
+          }
+
+          const callKey = toolCallKey(fn.name, args);
+          const priorAttempts = toolCallAttempts.get(callKey) ?? 0;
+          if (priorAttempts >= 1) {
+            errorMessage = "I couldn’t complete a Genesis operation after a corrected attempt. I stopped here to avoid repeating the same change.";
+            logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: "DuplicateToolCallBlocked", errorMessage });
+            safeEmit({ type: "error", message: errorMessage });
+            stopped = true;
+            break;
+          }
+          toolCallAttempts.set(callKey, priorAttempts + 1);
+
           toolCallCount += 1;
           safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
           logAgentLaunch({ ...launchBase, event: "tool_started", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
@@ -390,7 +426,7 @@ export async function runAgentLoop(
             content: resultText,
           });
         }
-        if (sink.closed()) {
+        if (stopped || sink.closed()) {
           stopped = true;
           break;
         }

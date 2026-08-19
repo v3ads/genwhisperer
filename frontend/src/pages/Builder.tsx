@@ -119,6 +119,8 @@ export default function Builder() {
   const addRow = (kind: Row["kind"], text: string) =>
     setRows((r) => [...r, { id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, kind, text }]);
 
+  const dismissRow = (id: string) => setRows((r) => r.filter((row) => row.id !== id));
+
   // ── Send a message ────────────────────────────────────────────────────────
   async function send() {
     const text = input.trim();
@@ -169,6 +171,13 @@ export default function Builder() {
   async function resolveGate(gateId: string, approved: boolean) {
     setGates((g) => g.map((x) => (x.gateId === gateId ? { ...x, resolved: approved ? "approved" : "denied" } : x)));
     try { await agentApi.approveGate(gateId, approved); } catch { /* non-fatal */ }
+  }
+
+  async function dismissGate(gate: Gate) {
+    if (!gate.resolved) {
+      try { await agentApi.approveGate(gate.gateId, false); } catch { /* non-fatal */ }
+    }
+    setGates((g) => g.filter((x) => x.gateId !== gate.gateId));
   }
 
   // ── KB side-panel query ───────────────────────────────────────────────────
@@ -278,6 +287,9 @@ export default function Builder() {
                   {rows.map((r) => (
                     <div key={r.id} className={`msg ${r.kind}`}>
                       <div className="role">{r.kind === "user" ? "You" : r.kind === "error" ? "Error" : "Assistant"}</div>
+                      {r.kind !== "user" && (
+                        <button className="msg-close" type="button" onClick={() => dismissRow(r.id)} aria-label="Dismiss message" title="Dismiss message">×</button>
+                      )}
                       <div className="bubble" dangerouslySetInnerHTML={{ __html: mdToHtml(r.text) }} />
                     </div>
                   ))}
@@ -291,6 +303,7 @@ export default function Builder() {
                       <div className="g-head">
                         <span className="g-badge">⚠️ confirm</span>
                         <span className="g-tool">{g.tool}</span>
+                        <button className="msg-close gate-close" type="button" onClick={() => void dismissGate(g)} aria-label="Dismiss confirmation" title="Dismiss confirmation">×</button>
                       </div>
                       <div className="g-msg">
                         {g.resolved
