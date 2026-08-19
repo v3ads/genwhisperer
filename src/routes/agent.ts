@@ -149,6 +149,11 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+  // Send a first SSE comment immediately, then periodic comment heartbeats.
+  // Comments are ignored by the browser event parser but prevent proxies from
+  // treating a long-running Genesis operation as an idle response.
+  res.write(": connected\n\n");
+  (res as Response & { flush?: () => void }).flush?.();
   logAgentLaunch({ requestId, event: "stream_started", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
 
   // ── Sink: writes each AgentEvent as an SSE `data:` line ───────────────────
@@ -157,13 +162,22 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     emit(ev: AgentEvent) {
       if (closed) return;
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      (res as Response & { flush?: () => void }).flush?.();
     },
     closed() {
       return closed;
     },
   };
+  const heartbeat = setInterval(() => {
+    if (!closed && !res.writableEnded) {
+      res.write(": keepalive\n\n");
+      (res as Response & { flush?: () => void }).flush?.();
+    }
+  }, 15_000);
+
   res.on("close", () => {
     closed = true;
+    clearInterval(heartbeat);
     logAgentLaunch({ requestId, event: "stream_closed", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
   });
 
@@ -218,6 +232,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     /* AITable logging is best-effort */
   }
 
+  clearInterval(heartbeat);
   res.end();
 });
 

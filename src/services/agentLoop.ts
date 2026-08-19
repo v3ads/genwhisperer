@@ -59,6 +59,9 @@ function friendlyModelName(model: string): string {
 function friendlyToolStatus(toolName: string): string {
   const normalized = toolName.toLowerCase();
   if (normalized === "genesis_context") return "Reviewing your Genesis project…";
+  if (normalized === "genesis_read_files") return "Reading your project files…";
+  if (normalized === "genesis_cloud_status") return "Checking your Genesis project status…";
+  if (normalized === "genesis_cloud_migrate") return "Genesis is migrating your project. This can take a minute…";
   if (normalized.includes("read") || normalized.includes("list") || normalized.includes("get") || normalized.includes("search")) {
     return "Reviewing project details…";
   }
@@ -287,7 +290,10 @@ export async function runAgentLoop(
         stopped = true;
         break;
       }
-      safeEmit({ type: "status", text: `${friendlyModelName(input.model)} is formulating a plan…` });
+      const modelProgress = iterations === 1
+        ? `${friendlyModelName(input.model)} is reviewing your request…`
+        : `${friendlyModelName(input.model)} is reviewing the project and preparing the next step…`;
+      safeEmit({ type: "status", text: modelProgress });
 
       let resp;
       try {
