@@ -6,7 +6,9 @@
  * it to the matching callback. Mirrors the v1 streamChat() reader pattern
  * (reader + decoder + buffer + line split) but for V2's structured events.
  *
- * The caller passes an AbortSignal (for the Stop button + unmount cleanup).
+ * A small retry is intentionally limited to failures before an SSE response
+ * starts. This safely absorbs transient edge/proxy failures without replaying
+ * a request after the server could have begun an agent action.
  */
 
 /** Mirrors src/services/agentLoop.ts AgentEvent (the wire shape). */
@@ -43,35 +45,76 @@ export interface AgentStreamInput {
   model?: string;
 }
 
+const STREAM_START_MAX_ATTEMPTS = 3;
+const RETRYABLE_START_STATUSES = new Set([502, 503, 504]);
+
+function retryDelay(attempt: number): number {
+  return 350 * 2 ** attempt + Math.floor(Math.random() * 150);
+}
+
+function waitForRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms);
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(Object.assign(new Error("Request aborted"), { name: "AbortError" }));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
 /**
- * Start an agent turn. Returns when the server closes the stream (after done).
- * Throws ApiError on a non-2xx response before the stream starts.
+ * Start an agent turn. A 502/503/504 or network interruption before the SSE
+ * body begins is retried twice. Once the stream starts, it is never replayed.
  */
 export async function streamAgent(
   input: AgentStreamInput,
   handlers: AgentStreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch("/api/agent/message", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    signal,
-  });
-
-  if (!res.ok || !res.body) {
-    let message = `Agent request failed (${res.status})`;
+  for (let attempt = 0; attempt < STREAM_START_MAX_ATTEMPTS; attempt += 1) {
+    let res: Response;
     try {
-      const p = (await res.json()) as { error?: string; message?: string };
-      message = p.message || p.error || message;
-    } catch {
-      /* non-JSON error body */
+      res = await fetch("/api/agent/message", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted || attempt === STREAM_START_MAX_ATTEMPTS - 1) throw error;
+      handlers.onStatus?.("Connection interrupted. Reconnecting…");
+      await waitForRetry(retryDelay(attempt), signal);
+      continue;
     }
-    throw new Error(message);
-  }
 
-  const reader = res.body.getReader();
+    if (!res.ok || !res.body) {
+      let message = `Agent request failed (${res.status})`;
+      try {
+        const p = (await res.json()) as { error?: string; message?: string };
+        message = p.message || p.error || message;
+      } catch {
+        /* non-JSON error body */
+      }
+
+      if (RETRYABLE_START_STATUSES.has(res.status) && attempt < STREAM_START_MAX_ATTEMPTS - 1) {
+        handlers.onStatus?.("Connection interrupted. Reconnecting…");
+        await waitForRetry(retryDelay(attempt), signal);
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    // From this point the server has accepted the request and may perform work.
+    // Do not retry stream interruption errors, which could duplicate an agent turn.
+    await consumeStream(res, handlers);
+    return;
+  }
+}
+
+async function consumeStream(res: Response, handlers: AgentStreamHandlers): Promise<void> {
+  const reader = res.body!.getReader();
   try {
     const decoder = new TextDecoder();
     let buffer = "";
