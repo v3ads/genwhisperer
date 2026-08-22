@@ -1,6 +1,6 @@
 # eStage Runtime Generation Safeguards
 
-**Status:** Ready for release validation.
+**Status:** Deployed to production on 2026-08-22 EDT.
 **Scope:** GenWhisperer Builder prompt policy and reusable generated-project safety template.
 
 ## Purpose
@@ -42,7 +42,11 @@ pnpm exec vitest run src/config/systemPrompt.estageRuntime.test.ts templates/est
 git diff --check
 ```
 
-The focused test run completed with **2 test files and 5 tests passing**. The server declaration build also passed after the explicit type annotations were added.
+The focused test run completed with **2 test files and 5 tests passing**. The complete test run completed with **5 test files and 15 tests passing**. The server declaration build also passed after the explicit type annotations were added.
+
+## Deployment confirmation
+
+Commit `dca3e99` (`Add safe eStage runtime generation guidance`) was pushed to `main`. Railway reported the matching deployment as **ACTIVE** and **Deployment successful** for the `genwhisperer-web` production service. The public health endpoint then returned `{"status":"ok","env":"production"}`.
 
 ## Release boundary
 
