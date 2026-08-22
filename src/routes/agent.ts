@@ -42,7 +42,7 @@ import { logSessionToAITable, type ChatMessage as AitableChatMessage } from "../
 import { z } from "zod";
 import { logAgentLaunch } from "../utils/launchObservability.js";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 // ─── POST /api/agent/message ───────────────────────────────────────────────────
 // Start (or resume) an agent turn. Streams SSE events from the agent loop.

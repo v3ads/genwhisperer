@@ -19,7 +19,7 @@ import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const app = express();
+const app: ReturnType<typeof express> = express();
 const PORT = parseInt(process.env.PORT ?? "3001", 10);
 
 // ─── Frontend dist path ───────────────────────────────────────────────────────

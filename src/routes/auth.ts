@@ -9,7 +9,7 @@ import type { AuthRequest } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { z } from "zod";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 const MAGIC_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const SESSION_COOKIE = "gw_session";

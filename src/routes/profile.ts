@@ -20,7 +20,7 @@ import { validateOpenRouterKey, fetchModels, type OrModel } from "../services/op
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
 import { z } from "zod";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 // ─── GET /api/profile ──────────────────────────────────────────────────────────
 // Returns the user's masked OpenRouter key + preferred model (never the

@@ -26,7 +26,7 @@ import {
 import { requireAuth, requireAdmin, type AuthRequest } from "../middleware/auth.js";
 import { loadHistory } from "../services/history.js";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 router.use(requireAuth, requireAdmin);
 
 // ─── GET /api/admin/users ─────────────────────────────────────────────────────

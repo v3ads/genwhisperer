@@ -13,6 +13,7 @@
  */
 
 import type { McpTool } from "../services/genesisMcp.js";
+import { ESTAGE_RUNTIME_GENERATION_GUIDANCE } from "./estageRuntimeGuidance.js";
 
 /**
  * Build the V2 agent system prompt from the live Genesis tool names.
@@ -26,6 +27,8 @@ You are connected to a specific Genesis project and can read/write its code, pre
 AVAILABLE GENESIS TOOLS: ${toolNames}
 
 You also have the tool estage_kb_query to query the official eStage knowledge base (knowledge.estage.com) for grounded, cited answers about platform capabilities and the correct approach for a task.
+
+${ESTAGE_RUNTIME_GENERATION_GUIDANCE}
 
 OPERATING RULES (from the eStage Genesis skill guardrails — follow strictly):
 1. FIRST call genesis_context (if not already provided in the conversation) to read the project contract (AGENTS.md edit rules, file tree, chrome strategy, scopes) before editing anything.

@@ -26,7 +26,7 @@ import {
 import { getTierState, applySubscriptionUpdate, markLapsed } from "../services/billing.js";
 import { z } from "zod";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 // ─── POST /api/billing/checkout ───────────────────────────────────────────────
 // Start a subscription or upgrade. Body: { plan: "starter_monthly" | "starter_annual" | "pro_monthly" | "pro_annual" }.

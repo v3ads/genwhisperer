@@ -23,7 +23,7 @@ import {
 import { canAddProject, getTierState } from "../services/billing.js";
 import { z } from "zod";
 
-const router = Router();
+const router: ReturnType<typeof Router> = Router();
 
 // A project row in list responses (token masked, never decrypted).
 interface ProjectListRow {
