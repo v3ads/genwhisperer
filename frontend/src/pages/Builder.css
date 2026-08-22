@@ -186,3 +186,36 @@
 .msg-close:focus-visible{outline:2px solid #38bdf8;outline-offset:2px;}
 .gate-close{position:static;margin-left:auto;}
 .msg.narration .bubble,.msg.error .bubble{padding-right:38px;}
+
+/* ===========================================================================
+   First-load guard — blocking modal when the linked Genesis project has no
+   pages. Instructional only; the only way past it is to create a page in
+   Genesis (in another tab) and click "I've created it" (or refocus this tab).
+   =========================================================================== */
+.gw-modal-overlay{
+  position:fixed;inset:0;z-index:1200;
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  background:rgba(7,12,22,.72);backdrop-filter:blur(6px);
+}
+.gw-modal{
+  width:100%;max-width:520px;
+  background:var(--navy-2);border:1px solid var(--line);border-radius:16px;
+  padding:30px 32px;box-shadow:0 30px 80px -24px rgba(0,0,0,.7);
+}
+.gw-modal h2{
+  font-size:20px;font-weight:600;margin:0 0 14px;color:var(--text);
+}
+.gw-modal-body{
+  font-size:14.5px;line-height:1.6;color:var(--text-dim);margin:0 0 24px;
+}
+.gw-modal-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.gw-modal-actions .btn{width:auto;}
+.gw-modal-actions .btn-primary{
+  background:linear-gradient(135deg,var(--cyan),var(--cyan-line));border:none;color:#04111f;font-weight:600;
+}
+.gw-modal-actions .btn-primary:hover{filter:brightness(1.08);}
+.gw-modal-actions .btn-ghost{
+  background:transparent;border:1px solid var(--line);color:var(--text);
+}
+.gw-modal-actions .btn-ghost:hover{border-color:var(--cyan-line);background:var(--navy-1);}
+.gw-modal-actions .btn-ghost:disabled{opacity:.6;cursor:wait;}

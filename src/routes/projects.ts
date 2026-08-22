@@ -15,8 +15,9 @@ import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, genesisProjects } from "../db/index.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
-import { encrypt, maskApiKey } from "../utils/crypto.js";
+import { encrypt, maskApiKey, decrypt } from "../utils/crypto.js";
 import {
+  GenesisMcpClient,
   parseGenesisProjectId,
   validateGenesisConnection,
 } from "../services/genesisMcp.js";
@@ -201,6 +202,86 @@ router.delete("/:id", requireAuth, async (req: AuthRequest, res) => {
   }
   await db.delete(genesisProjects).where(eq(genesisProjects.id, id));
   res.json({ success: true });
+});
+
+// ─── GET /api/projects/:id/pages-count ─────────────────────────────────────────
+// First-load guard for the Builder: reports whether the linked Genesis project
+// has any pages yet. The frontend uses this to block the builder with an
+// instructional modal when the project is empty (zero pages) — there is nothing
+// to build on until the user creates a page in Genesis.
+//
+// The Genesis token is encrypted at rest and must never reach the browser, so
+// this route decrypts it server-side and calls the Genesis MCP `genesis_pages`
+// tool via the same GenesisMcpClient the agent loop uses.
+//
+// FAIL-OPEN CONTRACT: on ANY error (auth failure, network error, unexpected
+// response shape, parse failure), the route returns 200 with ok:false and
+// pageCount:null. The frontend treats a non-null pageCount===0 as the only
+// condition that shows the blocking modal — a transient API failure must never
+// lock a user out of a project that actually has pages.
+router.get("/:id/pages-count", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "Invalid project id" });
+    return;
+  }
+  const userId = req.user!.id;
+
+  const rows = await db
+    .select()
+    .from(genesisProjects)
+    .where(eq(genesisProjects.id, id))
+    .limit(1);
+  if (!rows.length || rows[0].userId !== userId) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const project = rows[0];
+
+  // Fail-open envelope for any transient/unexpected failure.
+  const failOpen = () => res.json({ ok: false, pageCount: null, hasPages: null });
+
+  let token: string;
+  try {
+    token = decrypt(project.tokenEncrypted);
+  } catch {
+    return failOpen();
+  }
+
+  try {
+    const client = new GenesisMcpClient(project.mcpUrl, token);
+    const result = await client.callTool("genesis_pages", {});
+    const text = (result?.text || "").trim();
+
+    // genesis_pages returns its page list as text content. Try to parse it as
+    // JSON and count items; accept both a bare array and an envelope shaped
+    // like { pages: [...] } or { items: [...] }.
+    let count: number | null = null;
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        count = parsed.length;
+      } else if (parsed && typeof parsed === "object") {
+        const arr =
+          (parsed as { pages?: unknown[] }).pages ||
+          (parsed as { items?: unknown[] }).items ||
+          (parsed as { data?: unknown[] }).data;
+        if (Array.isArray(arr)) count = arr.length;
+      }
+    } catch {
+      /* not JSON — fall through to fail-open */
+    }
+
+    if (count === null) {
+      // Couldn't determine the page count from the response. Fail open rather
+      // than risk blocking a project that actually has pages.
+      return failOpen();
+    }
+    res.json({ ok: true, pageCount: count, hasPages: count > 0 });
+  } catch {
+    // Auth failure, network error, gateway 5xx, timeout — all fail open.
+    return failOpen();
+  }
 });
 
 export default router;

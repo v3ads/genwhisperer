@@ -160,6 +160,15 @@ export const profile = {
 
 // --- projects (V2) ---------------------------------------------------------
 
+// Result of the pages-count guard. ok:false (transient API failure or
+// indeterminate response) means the frontend must NOT block the builder.
+// hasPages is null when the count is unknown, true when >0, false when 0.
+export interface PagesCountResult {
+  ok: boolean;
+  pageCount: number | null;
+  hasPages: boolean | null;
+}
+
 export const projects = {
   list: () => request<{ projects: Project[] }>("/projects"),
   create: (name: string, mcpUrl: string, token: string) =>
@@ -173,6 +182,10 @@ export const projects = {
       body: JSON.stringify(patch),
     }),
   remove: (id: number) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+  // First-load guard: reports whether the linked Genesis project has pages.
+  // The route fails open (ok:false, pageCount:null) on any error so a
+  // transient API failure never blocks the builder.
+  pageCount: (id: number) => request<PagesCountResult>(`/projects/${id}/pages-count`),
 };
 
 // --- agent (V2) — conversations + kb (the SSE message stream is in agentStream.ts) ---

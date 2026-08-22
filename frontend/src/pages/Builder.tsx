@@ -11,6 +11,7 @@ import {
   type OrModel,
   type KbSource,
   type SubscriptionState,
+  type PagesCountResult,
 } from "../lib/api";
 import { streamAgent } from "../lib/agentStream";
 import { mdToHtml } from "../lib/mdToHtml";
@@ -62,6 +63,32 @@ export default function Builder() {
   const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
 
+  // ── First-load guard: block the builder when the linked Genesis project
+  //    has zero pages. noPagesProjectId holds the project id that was found
+  //    empty (null = no block). The guard is dismissed only by the "I've
+  //    created it" button after a re-check confirms pages now exist, or by a
+  //    window-focus re-check that finds pages.
+  const [noPagesProjectId, setNoPagesProjectId] = useState<number | null>(null);
+  const [recheckingPages, setRecheckingPages] = useState(false);
+
+  // ── Empty-project guard: query the linked project's page count. ───────────
+  // Only pageCount === 0 (explicitly empty) shows the blocking modal. ok:false
+  // (transient failure / indeterminate) clears any block so a user is never
+  // locked out of a project that actually has pages.
+  const checkPages = useCallback(async (pid: number) => {
+    try {
+      const r: PagesCountResult = await projectsApi.pageCount(pid);
+      if (r.ok && r.pageCount === 0) {
+        setNoPagesProjectId(pid);
+      } else {
+        setNoPagesProjectId(null);
+      }
+    } catch {
+      // Network/parse failure on the client side — fail open, don't block.
+      setNoPagesProjectId(null);
+    }
+  }, []);
+
   // ── Load profile + projects on mount ──────────────────────────────────────
   const load = useCallback(async () => {
     try {
@@ -81,15 +108,30 @@ export default function Builder() {
         // pick project from query param, else the first one
         const qp = params.get("project");
         const initial = qp ? Number(qp) : pr.projects[0].id;
-        if (pr.projects.some((x) => x.id === initial)) setProjectId(initial);
+        if (pr.projects.some((x) => x.id === initial)) {
+          setProjectId(initial);
+          // First-load guard: after the project link resolves, check whether
+          // the linked Genesis project has any pages. Fail-open — a transient
+          // API error or indeterminate response never blocks the builder.
+          void checkPages(initial);
+        }
       }
     } catch (e) {
       setSetupMsg(e instanceof ApiError ? e.message : "Could not load your profile.");
     } finally {
       setLoading(false);
     }
-  }, [params]);
+  }, [params, checkPages]);
   useEffect(() => { void load(); }, [load]);
+
+  // Re-check on window focus while the modal is open, so the user can create
+  // the page in another Genesis tab and come back without a full reload.
+  useEffect(() => {
+    if (noPagesProjectId === null) return;
+    const onFocus = () => { if (noPagesProjectId !== null) void checkPages(noPagesProjectId); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [noPagesProjectId, checkPages]);
 
   // ── Resume a conversation if ?conversation= is present ────────────────────
   useEffect(() => {
@@ -125,7 +167,8 @@ export default function Builder() {
   // ── Send a message ────────────────────────────────────────────────────────
   async function send() {
     const text = input.trim();
-    if (!text || busy || !projectId) return;
+    // Block submission while the empty-project guard is up.
+    if (!text || busy || !projectId || noPagesProjectId !== null) return;
     setInput("");
     setBusy(true);
     setHint("Initiating your request…");
@@ -186,6 +229,19 @@ export default function Builder() {
     setGates((g) => g.filter((x) => x.gateId !== gate.gateId));
   }
 
+  // ── "I've created it" — re-run the page-count check and dismiss the blocking
+  //    modal only if the project now has at least one page. If still empty, the
+  //    modal stays open.
+  async function recheckPagesAndMaybeDismiss() {
+    if (noPagesProjectId === null) return;
+    setRecheckingPages(true);
+    try {
+      await checkPages(noPagesProjectId);
+    } finally {
+      setRecheckingPages(false);
+    }
+  }
+
   // ── KB side-panel query ───────────────────────────────────────────────────
   async function askKb() {
     const q = kbQuery.trim();
@@ -217,17 +273,71 @@ export default function Builder() {
 
   const costClass = cost >= 1.0 ? "high" : cost >= 0.25 ? "warn" : "";
 
+  // The currently-selected project (for the Genesis open-in-builder link).
+  const currentProject = projects.find((p) => p.id === projectId) || null;
+  // Genesis builder URL for the linked project. The MCP URL has the shape
+  // https://genesis.estage.com/api/agent/<projectId>/mcp; the project's builder
+  // UI lives at https://genesis.estage.com/<projectId>. Fall back to the app
+  // root if we can't derive the id.
+  const genesisBuilderUrl = currentProject?.genesisProjectId
+    ? `https://genesis.estage.com/${currentProject.genesisProjectId}`
+    : "https://genesis.estage.com/";
+
   return (
     <div className="app-wrap">
       <div className="app-glow" />
       <AppNav />
+      {/* First-load guard: blocking modal when the linked Genesis project has
+          zero pages. Instructional only — no create-page action (the Genesis
+          API can't scaffold into a project with no file structure). */}
+      {noPagesProjectId !== null && (
+        <div className="gw-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="gw-no-pages-title">
+          <div className="gw-modal">
+            <h2 id="gw-no-pages-title">Add a page in Genesis first.</h2>
+            <p className="gw-modal-body">
+              This Genesis project is empty, so there&rsquo;s nothing here to build on yet.
+              Open the project in Genesis and create a single blank page, or a home page,
+              then come back. Once one page exists, you can build, edit, and change anything
+              from here.
+            </p>
+            <div className="gw-modal-actions">
+              <a
+                className="btn btn-primary"
+                href={genesisBuilderUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open in Genesis.
+              </a>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={recheckingPages}
+                onClick={() => void recheckPagesAndMaybeDismiss()}
+              >
+                {recheckingPages ? "Checking…" : "I&rsquo;ve created it"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="builder">
         {/* header: project + model + cost */}
         <div className="b-head">
           <select
             className="proj-sel"
             value={projectId}
-            onChange={(e) => { setProjectId(Number(e.target.value)); setRows([]); setConversationId(null); sessionCostRef.current = 0; setCost(0); }}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setProjectId(next);
+              setRows([]);
+              setConversationId(null);
+              sessionCostRef.current = 0;
+              setCost(0);
+              // Re-run the empty-project guard for the newly-selected project.
+              setNoPagesProjectId(null);
+              if (next) void checkPages(next);
+            }}
             disabled={busy}
           >
             {projects.length === 0 && <option value="">No projects</option>}
