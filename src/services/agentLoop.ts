@@ -366,9 +366,36 @@ export async function runAgentLoop(
           }
           const toolGuard = guardAgentToolCall(toolCallAttempts, fn.name, args);
           if (!toolGuard.allowed) {
-            errorMessage = toolGuard.errorName === "InvalidToolArguments"
-              ? `I couldn’t complete that file update: ${toolGuard.message} No changes were made.`
-              : toolGuard.message;
+            if (toolGuard.errorName === "InvalidToolArguments") {
+              // Recoverable: the model omitted a required arg (e.g. path/content
+              // for write_file, or path/old_string/new_string for edit_file). Feed
+              // the validation message back to the model as a tool result so it can
+              // self-correct and re-emit the call with valid args, instead of
+              // halting the turn with a confusing error. MAX_ITERATIONS bounds this.
+              logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: toolGuard.errorName, errorMessage: toolGuard.message });
+              safeEmit({ type: "status", text: "Correcting a missing file argument…" });
+              const guardResultText = `Error: ${toolGuard.message} Please re-issue the call with the required arguments.`;
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                name: fn.name,
+                content: guardResultText,
+              });
+              if (conversationId) {
+                await appendMessage({
+                  conversationId: conversationId as number,
+                  role: "tool",
+                  content: guardResultText,
+                });
+              }
+              // Stop processing further tool calls in this batch and let the
+              // while-loop re-iterate so the model sees the guard result and
+              // can re-plan (rather than firing a second write in the same
+              // batch after the first was rejected for missing args).
+              break;
+            }
+            // DuplicateToolCallBlocked — genuine circuit-breaker, halt the run.
+            errorMessage = toolGuard.message;
             logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: toolGuard.errorName, errorMessage: toolGuard.message });
             safeEmit({ type: "error", message: errorMessage });
             stopped = true;
