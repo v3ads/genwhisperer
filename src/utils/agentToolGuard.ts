@@ -11,7 +11,9 @@ export function guardAgentToolCall(
   toolName: string,
   args: Record<string, unknown>
 ): ToolCallGuardResult {
-  if (toolName.toLowerCase().endsWith("write_file")) {
+  const lower = toolName.toLowerCase();
+
+  if (lower.endsWith("write_file")) {
     if (typeof args.path !== "string" || !args.path.trim()) {
       return {
         allowed: false,
@@ -24,6 +26,32 @@ export function guardAgentToolCall(
         allowed: false,
         errorName: "InvalidToolArguments",
         message: "The file content is missing, so Genesis cannot write this file safely.",
+      };
+    }
+  }
+
+  if (lower.endsWith("edit_file")) {
+    if (typeof args.path !== "string" || !args.path.trim()) {
+      return {
+        allowed: false,
+        errorName: "InvalidToolArguments",
+        message: "A file path is required before Genesis can edit a file.",
+      };
+    }
+    if (typeof args.old_string !== "string" || !args.old_string.trim()) {
+      return {
+        allowed: false,
+        errorName: "InvalidToolArguments",
+        message:
+          "The old_string (the exact text to replace) is missing, so Genesis cannot edit this file safely.",
+      };
+    }
+    if (typeof args.new_string !== "string" || args.new_string.trim().length === 0) {
+      return {
+        allowed: false,
+        errorName: "InvalidToolArguments",
+        message:
+          "The new_string (the replacement text) is missing, so Genesis cannot edit this file safely.",
       };
     }
   }
