@@ -25,7 +25,7 @@
 
 import { GenesisMcpClient, type McpTool } from "./genesisMcp.js";
 import {
-  chat as orChat,
+  chatStream as orChatStream,
   computeCost,
   fetchModels,
   type ChatMessage,
@@ -76,6 +76,7 @@ function friendlyToolStatus(toolName: string): string {
 export type AgentEvent =
   | { type: "status"; text: string }
   | { type: "narration"; text: string }
+  | { type: "delta"; text: string }
   | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
   | { type: "tool_approval_resolved"; gateId: string; approved: boolean }
   | { type: "kb_answer"; question: string; answer: string; sources: Array<{ title?: string; url?: string }> }
@@ -335,22 +336,27 @@ export async function runAgentLoop(
 
       let resp;
       try {
-        resp = await orChat({
+        resp = await orChatStream({
           apiKey: input.openrouterKey,
           model: input.model,
           messages,
           tools,
           observability: launchBase,
+          onDelta: (delta) => {
+            // Stream partial content to the user in real-time so they see
+            // text appearing instead of a frozen screen during long
+            // reasoning-model generations. Only stream when there's no
+            // tool_calls yet (tool-call preambles are not rendered live —
+            // see the comment at the tool_calls branch below).
+            safeEmit({ type: "delta", text: delta.content });
+          },
         });
       } catch (e) {
         const err = e as Error & { name?: string };
         if (err.name === "AbortError") {
           // Distinguish a user-initiated abort (the SSE sink is closed — the
           // user navigated away or cancelled) from a timeout abort (the sink is
-          // still open — the OpenRouter call exceeded CHAT_TIMEOUT_MS).
-          // A timeout with the sink still open means the user is staring at a
-          // frozen screen with no explanation. Surface a friendly message
-          // instead of exiting silently.
+          // still open — the OpenRouter call exceeded the stream timeout).
           if (sink.closed()) {
             // User left — exit quietly (no point emitting to a dead stream).
             stopped = true;

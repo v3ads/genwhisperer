@@ -66,6 +66,9 @@ export default function Builder() {
   // Elapsed-seconds timer: runs only while busy, so users see time passing
   // instead of a frozen screen during long agent turns (some run 2-3+ min).
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ID of the live "streaming" assistant row that deltas update in place.
+  // null when no streaming row has been created yet for the current turn.
+  const streamingRowIdRef = useRef<string | null>(null);
 
   // ── First-load guard: block the builder when the linked Genesis project
   //    has zero pages. noPagesProjectId holds the project id that was found
@@ -195,6 +198,8 @@ export default function Builder() {
     // instead of a static line during long agent turns.
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     elapsedTimerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    // Reset the streaming row tracker for this turn.
+    streamingRowIdRef.current = null;
 
     const ctrl = new AbortController();
     const turnCostBase = sessionCostRef.current;
@@ -206,6 +211,20 @@ export default function Builder() {
         {
           onStatus: (t) => setHint(t),
           onNarration: (t) => addRow("narration", t),
+          onDelta: (t) => {
+            // Stream partial content into a live assistant bubble. On the first
+            // delta of a turn, create the row; on subsequent deltas, replace
+            // its text with the accumulated content from the server. This gives
+            // the user real-time text appearing instead of a frozen screen.
+            if (!streamingRowIdRef.current) {
+              const id = `stream-${Date.now()}`;
+              streamingRowIdRef.current = id;
+              setRows((r) => [...r, { id, kind: "assistant", text: t }]);
+            } else {
+              const sid = streamingRowIdRef.current;
+              setRows((r) => r.map((row) => (row.id === sid ? { ...row, text: t } : row)));
+            }
+          },
           onConversation: (id) => setConversationId(id),
           onCost: (c) => {
             const runningSessionCost = turnCostBase + c;
@@ -216,7 +235,17 @@ export default function Builder() {
             setGates((g) => [...g, { gateId, tool, args }]),
           onKbAnswer: (q, a, sources) =>
             setKbEntries((k) => [...k, { id: `kb-${Date.now()}`, question: q, answer: a, sources }]),
-          onFinalAnswer: (t) => addRow("assistant", t),
+          onFinalAnswer: (t) => {
+            // Replace the live streaming row with the final answer, or add a
+            // new assistant row if no deltas arrived (e.g. a turn that went
+            // straight to tool calls with no streamed content).
+            const sid = streamingRowIdRef.current;
+            if (sid) {
+              setRows((r) => r.map((row) => (row.id === sid ? { ...row, text: t } : row)));
+            } else {
+              addRow("assistant", t);
+            }
+          },
           onError: (m) => addRow("error", m),
           onDone: () => setHint("Enter to send · Shift+Enter for newline"),
         },

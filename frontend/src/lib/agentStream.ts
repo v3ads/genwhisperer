@@ -15,6 +15,7 @@
 export type AgentEvent =
   | { type: "status"; text: string }
   | { type: "narration"; text: string }
+  | { type: "delta"; text: string }
   | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
   | { type: "tool_approval_resolved"; gateId: string; approved: boolean }
   | { type: "kb_answer"; question: string; answer: string; sources: Array<{ title?: string; url?: string }> }
@@ -28,6 +29,7 @@ export type AgentEvent =
 export interface AgentStreamHandlers {
   onStatus?: (text: string) => void;
   onNarration?: (text: string) => void;
+  onDelta?: (text: string) => void;
   onToolApprovalRequest?: (gateId: string, tool: string, args: Record<string, unknown>) => void;
   onToolApprovalResolved?: (gateId: string, approved: boolean) => void;
   onKbAnswer?: (question: string, answer: string, sources: Array<{ title?: string; url?: string }>) => void;
@@ -149,6 +151,7 @@ function dispatch(ev: AgentEvent, h: AgentStreamHandlers): void {
   switch (ev.type) {
     case "status": h.onStatus?.(ev.text); break;
     case "narration": h.onNarration?.(ev.text); break;
+    case "delta": h.onDelta?.(ev.text); break;
     case "tool_approval_request": h.onToolApprovalRequest?.(ev.gateId, ev.tool, ev.args); break;
     case "tool_approval_resolved": h.onToolApprovalResolved?.(ev.gateId, ev.approved); break;
     case "kb_answer": h.onKbAnswer?.(ev.question, ev.answer, ev.sources); break;
