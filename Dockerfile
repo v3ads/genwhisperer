@@ -12,6 +12,11 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig*.json ./
 COPY src ./src
+# Migrations folder is needed at build time so build:server can copy it into
+# dist/migrations, which the production stage then ships to the runtime image
+# (only dist/ is COPY'd to production — see line below). Without this, the
+# startup runMigrations() throws "Can't find meta/_journal.json" in production.
+COPY drizzle ./drizzle
 RUN npm run build:server
 
 # ─── Build frontend ───────────────────────────────────────────────────────────
