@@ -57,11 +57,15 @@ export default function Builder() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState("Enter to send · Shift+Enter for newline");
+  const [elapsed, setElapsed] = useState(0);
   const [cost, setCost] = useState(0);
   const [kbQuery, setKbQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
+  // Elapsed-seconds timer: runs only while busy, so users see time passing
+  // instead of a frozen screen during long agent turns (some run 2-3+ min).
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── First-load guard: block the builder when the linked Genesis project
   //    has zero pages. noPagesProjectId holds the project id that was found
@@ -146,7 +150,19 @@ export default function Builder() {
         const resumed: Row[] = [];
         for (const m of d.messages) {
           if (m.role === "user") resumed.push({ id: `h${m.id}`, kind: "user", text: m.content });
-          else if (m.role === "assistant") resumed.push({ id: `h${m.id}`, kind: "assistant", text: m.content });
+          else if (m.role === "assistant") {
+            // Suppress technical tool-call preambles on resume. During a live
+            // turn these are intentionally NOT rendered (agentLoop comment:
+            // "raw self-correction text is not a useful customer-facing progress
+            // signal"). But they were persisted and re-rendered as ASSISTANT
+            // bubbles on resume, surfacing internal jargon (rpc('exec_sql'),
+            // hasAdminSecret, edge function stub, etc.) to end users. Skip
+            // assistant rows that carry tool_calls — the final answer row has
+            // no tool_calls and is always shown. This matches the live-turn
+            // behavior and keeps the resumed view jargon-free.
+            if (m.toolCalls && Array.isArray(m.toolCalls) && m.toolCalls.length > 0) continue;
+            resumed.push({ id: `h${m.id}`, kind: "assistant", text: m.content });
+          }
         }
         setRows(resumed);
       } catch { /* non-fatal */ }
@@ -171,8 +187,14 @@ export default function Builder() {
     if (!text || busy || !projectId || noPagesProjectId !== null) return;
     setInput("");
     setBusy(true);
+    setElapsed(0);
     setHint("Initiating your request…");
     addRow("user", text);
+
+    // Start an elapsed-seconds counter so the user sees time passing
+    // instead of a static line during long agent turns.
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    elapsedTimerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
 
     const ctrl = new AbortController();
     const turnCostBase = sessionCostRef.current;
@@ -208,6 +230,10 @@ export default function Builder() {
       setBusy(false);
       abortRef.current = null;
       setHint("Enter to send · Shift+Enter for newline");
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
     }
   }
 
@@ -412,7 +438,11 @@ export default function Builder() {
                   ))}
                   {busy && (
                     <div className="thinking" aria-live="polite">
-                      {hint}
+                      <span className="dots" />
+                      <span className="dots" />
+                      <span className="dots" />
+                      <span className="t-text">{hint}</span>
+                      <span className="t-elapsed">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span>
                     </div>
                   )}
                   {gates.map((g) => (
