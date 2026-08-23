@@ -106,31 +106,21 @@ class ApiError extends Error {
 export { ApiError };
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  // cache: "no-store" on every fetch so the browser NEVER serves a cached
+  // response from its HTTP cache. Without this, the browser revalidates
+  // stale cached responses transparently — for endpoints whose data changes
+  // (e.g. conversation history after a new turn), this serves a stale body
+  // as a 200 (the Fetch API hides the 304) and the resume loader silently
+  // renders missing history. no-store forces a fresh network round-trip and
+  // a real 200 with the current body on every call. The server-side
+  // Cache-Control: no-store header alone is NOT enough because the browser
+  // can still revalidate a previously-cached entry before honoring it.
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
+    cache: "no-store",
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
   });
-
-  // 304 Not Modified: Express auto-generates ETags for JSON responses, so a
-  // browser that cached a prior response re-sends If-None-Match and gets a 304
-  // with no body. For endpoints whose data changes (e.g. conversation history
-  // after a new turn), this serves a stale view and — because 304 is not
-  // res.ok — would throw below, silently breaking resume. Re-fetch once
-  // unconditionally (cache-busting) to force a fresh 200 with the full body.
-  if (res.status === 304) {
-    const fresh = await fetch(`${BASE}${path}`, {
-      credentials: "include",
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
-      ...opts,
-      cache: "no-store",
-    });
-    if (fresh.ok) {
-      if (fresh.status === 204) return undefined as T;
-      return (await fresh.json()) as T;
-    }
-    // fall through to error handling with the original response
-  }
 
   if (!res.ok) {
     let payload: unknown = null;
