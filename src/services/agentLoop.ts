@@ -444,14 +444,30 @@ export async function runAgentLoop(
           safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
           logAgentLaunch({ ...launchBase, event: "tool_started", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
 
-          const resultText = await executeToolCall(
-            fn.name,
-            args,
-            tc.id,
-            mcp,
-            sink,
-            gateIds
-          );
+          // Heartbeat: some Genesis/eStage tool calls run 15-50s (genesis_read_files,
+          // estage_kb_query, genesis_connectors). Without a periodic status event the
+          // frontend's "working" line goes static for that whole window and reads as
+          // frozen. Emit a friendly "still working" status every 15s while the tool
+          // call is in flight so the user sees continued activity.
+          const heartbeatText = `${friendlyToolStatus(fn.name).replace(/…$/, "")} — still working, this can take a bit…`;
+          const heartbeat = setInterval(() => {
+            if (sink.closed()) return;
+            safeEmit({ type: "status", text: heartbeatText });
+          }, 15_000);
+
+          let resultText: string;
+          try {
+            resultText = await executeToolCall(
+              fn.name,
+              args,
+              tc.id,
+              mcp,
+              sink,
+              gateIds
+            );
+          } finally {
+            clearInterval(heartbeat);
+          }
           logAgentLaunch({ ...launchBase, event: "tool_succeeded", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
 
           // Feed the result back to the model as a tool message.

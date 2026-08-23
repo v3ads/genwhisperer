@@ -91,10 +91,12 @@
 .msg .bubble p:last-child{margin-bottom:0;}
 
 /* thinking indicator */
-.thinking{align-self:flex-start;color:var(--text-faint);font-size:13.5px;font-style:italic;padding:4px 0;}
-.thinking .dots{display:inline-block;animation:bdot 1.2s infinite;}
+.thinking{align-self:flex-start;color:var(--text-faint);font-size:13.5px;font-style:italic;padding:4px 0;display:flex;align-items:center;gap:3px;}
+.thinking .dots{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cyan);opacity:.3;animation:bdot 1.2s infinite;flex-shrink:0;}
 .thinking .dots:nth-child(2){animation-delay:.2s;}
 .thinking .dots:nth-child(3){animation-delay:.4s;}
+.thinking .t-text{margin-left:6px;}
+.thinking .t-elapsed{margin-left:8px;font-family:'JetBrains Mono',monospace;font-style:normal;font-size:12px;color:var(--text-faint);opacity:.7;}
 @keyframes bdot{0%,60%,100%{opacity:.3;}30%{opacity:1;}}
 
 /* write-confirmation gate card */
