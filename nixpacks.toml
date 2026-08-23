@@ -1,6 +1,13 @@
 # Nixpacks build configuration for Railway
 # Single service: builds frontend (Vite) then backend (TypeScript),
 # starts the Express server which also serves the SPA.
+#
+# Note: DB migrations are NOT run here. This service builds with RAILPACK,
+# which ignores nixpacks.toml. Migrations run via the service-level
+# preDeployCommand (["npm run db:migrate"]) configured in the Railway
+# dashboard / service config, which executes before each deploy with
+# NEON_DATABASE_URL available. See PR #13 history for the original
+# (non-functional) attempt to put db:migrate in this file.
 
 [phases.setup]
 nixPkgs = ["nodejs_22"]
@@ -14,8 +21,7 @@ cmds = [
 [phases.build]
 cmds = [
   "cd frontend && npm run build",
-  "npm run build:server",
-  "npm run db:migrate"
+  "npm run build:server"
 ]
 
 [start]
