@@ -84,6 +84,7 @@ export type AgentEvent =
   | { type: "cost"; totalUsd: number }
   | { type: "conversation"; id: number }
   | { type: "error"; message: string }
+  | { type: "timeout_retry_available"; conversationId: number }
   | { type: "done" };
 
 /** A sink that receives SSE events. The route implements this. */
@@ -143,6 +144,12 @@ export interface AgentRunInput {
   userMessage: string;
   /** Optional: a pre-fetched genesis_context to seed (avoids re-fetch). */
   seededContext?: string | null;
+  /** When true, trim replayed history to the last few turns before sending
+   *  to the model — reduces context size so a reasoning model can produce
+   *  its first token within the stream timeout. Used by the "Retry with
+   *  shorter history" button on timeout. Does NOT delete persisted history;
+   *  only trims what's sent to the model this turn. */
+  compressHistory?: boolean;
 }
 
 /** Result summary of a run (for logging / AITable). */
@@ -219,7 +226,7 @@ export async function runAgentLoop(
     const tools: OrTool[] = genesisToolsToOrTools(genesisTools);
 
     // ── 3. Assemble the message history ─────────────────────────────────────
-    const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
+    let messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
 
     // Seed genesis_context once (either pre-fetched or fetch it now).
     let contextText = input.seededContext ?? null;
@@ -304,6 +311,26 @@ export async function runAgentLoop(
           }
         }
       }
+
+      // Compress history: when compressHistory is true (the user clicked
+      // "Retry with shorter history" after a timeout), trim the replayed
+      // messages to keep only the system prompt(s) + the last few turns.
+      // This reduces the context size so a reasoning model can produce its
+      // first token within the stream timeout. The full history stays in
+      // the DB — only what's sent to the model this turn is trimmed.
+      if (input.compressHistory) {
+        const KEEP_LAST_N_TURNS = 3;
+        const systemMsgs = messages.filter((m) => m.role === "system");
+        const nonSystem = messages.filter((m) => m.role !== "system");
+        // Keep the last N non-system messages (user/assistant/tool pairs).
+        // A "turn" is roughly a user + assistant pair, so N*2ish messages.
+        const kept = nonSystem.slice(Math.max(0, nonSystem.length - KEEP_LAST_N_TURNS * 2));
+        // Ensure the first kept message isn't a lone tool result (which
+        // needs a preceding assistant tool_calls). If it is, drop it.
+        while (kept.length && kept[0].role === "tool") kept.shift();
+        messages = [...systemMsgs, ...kept];
+        safeEmit({ type: "status", text: "Retrying with a shorter conversation history…" });
+      }
     }
 
     // Append the new user message.
@@ -362,9 +389,13 @@ export async function runAgentLoop(
             stopped = true;
             break;
           }
-          // Timeout with the user still watching: tell them what happened.
+          // Timeout with the user still watching: tell them what happened and
+          // signal the frontend to show a "Retry with shorter history" button.
           errorMessage = "The model is taking longer than expected to respond. Please try again — your message was saved, so you can pick up where you left off.";
           safeEmit({ type: "narration", text: errorMessage });
+          if (conversationId) {
+            safeEmit({ type: "timeout_retry_available", conversationId: conversationId as number });
+          }
           stopped = true;
           break;
         }

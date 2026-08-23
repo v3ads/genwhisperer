@@ -99,6 +99,13 @@
 .thinking .t-elapsed{margin-left:8px;font-family:'JetBrains Mono',monospace;font-style:normal;font-size:12px;color:var(--text-faint);opacity:.7;}
 @keyframes bdot{0%,60%,100%{opacity:.3;}30%{opacity:1;}}
 
+/* timeout retry bar */
+.retry-bar{align-self:center;max-width:92%;background:var(--navy-2);border:1px solid var(--cyan-line);border-radius:13px;padding:16px 18px;margin:6px 0;text-align:center;}
+.retry-bar .retry-msg{display:block;color:var(--text-dim);font-size:13.5px;margin-bottom:12px;}
+.retry-bar .retry-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+.retry-bar .btn-retry{background:var(--cyan);color:var(--navy-1);border:1px solid var(--cyan);font-weight:600;}
+.retry-bar .btn-retry:hover{background:var(--cyan-soft);}
+
 /* write-confirmation gate card */
 .gate{
   align-self:center;max-width:92%;background:var(--navy-2);border:1px solid #f5b45455;
