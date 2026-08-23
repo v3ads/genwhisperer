@@ -14,7 +14,8 @@ cmds = [
 [phases.build]
 cmds = [
   "cd frontend && npm run build",
-  "npm run build:server"
+  "npm run build:server",
+  "npm run db:migrate"
 ]
 
 [start]
