@@ -60,6 +60,9 @@ export default function Builder() {
   const [elapsed, setElapsed] = useState(0);
   const [cost, setCost] = useState(0);
   const [kbQuery, setKbQuery] = useState("");
+  // Set when the backend signals a timeout_retry_available event; holds the
+  // conversationId to retry with compressed history. Cleared on send/stop.
+  const [retryAvailable, setRetryAvailable] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -184,13 +187,16 @@ export default function Builder() {
   const dismissRow = (id: string) => setRows((r) => r.filter((row) => row.id !== id));
 
   // ── Send a message ────────────────────────────────────────────────────────
-  async function send() {
+  // compressHistory: when true (the "Retry with shorter history" button), the
+  // server trims replayed history before sending to the model.
+  async function send(compressHistory = false) {
     const text = input.trim();
     // Block submission while the empty-project guard is up.
     if (!text || busy || !projectId || noPagesProjectId !== null) return;
     setInput("");
     setBusy(true);
     setElapsed(0);
+    setRetryAvailable(null);
     setHint("Initiating your request…");
     addRow("user", text);
 
@@ -207,7 +213,7 @@ export default function Builder() {
 
     try {
       await streamAgent(
-        { genesisProjectId: projectId, conversationId: conversationId ?? undefined, message: text, model },
+        { genesisProjectId: projectId, conversationId: conversationId ?? undefined, message: text, model, compressHistory },
         {
           onStatus: (t) => setHint(t),
           onNarration: (t) => addRow("narration", t),
@@ -247,6 +253,7 @@ export default function Builder() {
             }
           },
           onError: (m) => addRow("error", m),
+          onTimeoutRetryAvailable: (cid) => setRetryAvailable(cid),
           onDone: () => setHint("Enter to send · Shift+Enter for newline"),
         },
         ctrl.signal
@@ -497,6 +504,15 @@ export default function Builder() {
                       )}
                     </div>
                   ))}
+                  {retryAvailable !== null && !busy && (
+                    <div className="retry-bar">
+                      <span className="retry-msg">The model timed out. This can happen when a conversation gets long.</span>
+                      <div className="retry-actions">
+                        <button className="btn btn-retry" onClick={() => void send(true)}>Retry with shorter history</button>
+                        <button className="btn btn-ghost" onClick={() => void send()}>Try again</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* composer */}

@@ -23,6 +23,7 @@ export type AgentEvent =
   | { type: "cost"; totalUsd: number }
   | { type: "conversation"; id: number }
   | { type: "error"; message: string }
+  | { type: "timeout_retry_available"; conversationId: number }
   | { type: "done" };
 
 /** Callbacks the Builder registers. Each is optional; unset ones are ignored. */
@@ -37,6 +38,7 @@ export interface AgentStreamHandlers {
   onCost?: (totalUsd: number) => void;
   onConversation?: (id: number) => void;
   onError?: (message: string) => void;
+  onTimeoutRetryAvailable?: (conversationId: number) => void;
   onDone?: () => void;
 }
 
@@ -45,6 +47,9 @@ export interface AgentStreamInput {
   conversationId?: number;
   message: string;
   model?: string;
+  /** When true, the server trims replayed history to the last few turns
+   *  before sending to the model — reduces context for the retry. */
+  compressHistory?: boolean;
 }
 
 const STREAM_START_MAX_ATTEMPTS = 3;
@@ -81,7 +86,13 @@ export async function streamAgent(
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify({
+          genesisProjectId: input.genesisProjectId,
+          conversationId: input.conversationId,
+          message: input.message,
+          model: input.model,
+          compressHistory: input.compressHistory,
+        }),
         signal,
       });
     } catch (error) {
@@ -159,6 +170,7 @@ function dispatch(ev: AgentEvent, h: AgentStreamHandlers): void {
     case "cost": h.onCost?.(ev.totalUsd); break;
     case "conversation": h.onConversation?.(ev.id); break;
     case "error": h.onError?.(ev.message); break;
+    case "timeout_retry_available": h.onTimeoutRetryAvailable?.(ev.conversationId); break;
     case "done": h.onDone?.(); break;
   }
 }

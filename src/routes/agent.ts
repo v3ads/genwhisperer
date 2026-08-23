@@ -57,6 +57,11 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     conversationId: z.number().int().positive().optional(),
     message: z.string().min(1).max(8000),
     model: z.string().optional(),
+    /** When true, the agent loop trims replayed history to the last few turns
+     *  before sending to the model — reduces context size so a reasoning
+     *  model can produce its first token within the stream timeout. Used by
+     *  the "Retry with shorter history" button on timeout. */
+    compressHistory: z.boolean().optional().default(false),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -66,7 +71,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   }
 
   const userId = req.user!.id;
-  const { genesisProjectId, message, model } = parsed.data;
+  const { genesisProjectId, message, model, compressHistory } = parsed.data;
   const conversationId = parsed.data.conversationId ?? null;
 
   // ── Tier gate: lapsed users can't start turns; trial users hit the turn cap ──
@@ -193,6 +198,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
       openrouterKey,
       model: chosenModel,
       userMessage: message,
+      compressHistory,
     },
     sink
   );
