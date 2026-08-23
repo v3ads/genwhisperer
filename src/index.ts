@@ -205,11 +205,20 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 // ─── Start server ─────────────────────────────────────────────────────────────
 // Bind to 0.0.0.0 so Railway (and Docker) can reach the process.
 // Run DB migrations BEFORE binding so the schema matches the code before any
-// request is served, and a migration failure stops the server from starting
-// (fail loud rather than serving an app with a stale schema). Migrations are
-// idempotent, so running on every boot is safe and self-heals drift.
+// request is served. Migrations are idempotent, so running on every boot is
+// safe and self-heals drift.
+//
+// Migration failure is NON-FATAL: if runMigrations() throws (e.g. the
+// migrations folder isn't present in the image, or the DB is unreachable), we
+// log the error and start the server anyway. This avoids an outage where a
+// migration-path problem takes the whole app down. The schema drift surfaces
+// as per-query errors (visible in logs) rather than as a dead site. A future
+// deploy that fixes the migration path will then self-heal on the next boot.
 runMigrations()
-  .then(() => {
+  .catch((err) => {
+    console.error("⚠️ Startup migration failed (non-fatal — server starting anyway):", err);
+  })
+  .finally(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 GenWhisperer running on http://0.0.0.0:${PORT}`);
       console.log(`   Environment : ${process.env.NODE_ENV ?? "development"}`);
@@ -219,10 +228,6 @@ runMigrations()
       // Background pruning of expired magic links and revoked sessions.
       startCleanupJobs();
     });
-  })
-  .catch((err) => {
-    console.error("❌ Startup migration failed — server not started:", err);
-    process.exit(1);
   });
 
 export default app;
