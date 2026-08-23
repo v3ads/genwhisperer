@@ -392,6 +392,260 @@ export async function chat(opts: {
   throw new OpenRouterChatError("OpenRouter retry loop ended unexpectedly.");
 }
 
+// ─── Streaming chat ───────────────────────────────────────────────────────────
+// Reasoning models (GLM 5.2, DeepSeek V4 Pro) can take 2-3+ minutes to produce
+// their first output token when given a large context (genesis_context + 66 tool
+// definitions + history). A non-streaming request waits for the ENTIRE response
+// before returning anything, so the user stares at a frozen screen for that
+// whole window and hits the total-generation timeout. Streaming sends tokens
+// as they're generated so the user sees text appearing in real-time, and the
+// timeout becomes time-to-FIRST-token (not total generation) — a reasoning
+// model that thinks for 90s then streams its answer is fine; one that produces
+// nothing for 180s is genuinely stuck.
+
+/** Timeout to the first token of a streamed response. Reasoning models can
+ *  legitimately spend a long time "thinking" before the first output token, so
+ *  this is generous. Once the first token arrives, a shorter per-chunk timeout
+ *  guards against a stalled connection. */
+const STREAM_FIRST_TOKEN_TIMEOUT_MS = 180_000;
+/** Max gap between SSE chunks once streaming has started. */
+const STREAM_CHUNK_TIMEOUT_MS = 60_000;
+
+/** A delta of partial content from the streamed response. */
+export interface ChatStreamDelta {
+  /** Partial content text accumulated so far (concatenation of all deltas). */
+  content: string;
+}
+
+/**
+ * Run a STREAMING OpenRouter completion with native function-calling.
+ *
+ * Calls onDelta with the accumulated content as each chunk arrives, so the
+ * caller can stream text to the user in real-time. Returns the complete
+ * ChatResult (content + tool_calls + usage) once the stream closes.
+ *
+ * The timeout is two-phase: STREAM_FIRST_TOKEN_TIMEOUT_MS to the first token,
+ * then STREAM_CHUNK_TIMEOUT_MS between chunks. This lets reasoning models
+ * think for a long time before first output without hitting the timeout, while
+ * still catching a genuinely stalled connection after streaming starts.
+ */
+export async function chatStream(opts: {
+  apiKey: string;
+  model: string;
+  messages: ChatMessage[];
+  tools?: OrTool[];
+  fallbackModels?: string[];
+  observability?: OpenRouterObservabilityContext;
+  signal?: AbortSignal;
+  /** Called with { content } as each text delta arrives. content is the
+   *  accumulated text so far (not just the new chunk) so the caller can
+   *  replace the live bubble with the full running text. */
+  onDelta?: (delta: ChatStreamDelta) => void;
+}): Promise<ChatResult> {
+  const { apiKey, model, messages, tools, signal, observability, onDelta } = opts;
+  const fallbacks = (opts.fallbackModels ?? configuredFallbackModels())
+    .filter((fallback) => fallback !== model)
+    .slice(0, 3);
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: 0.3,
+    stream: true,
+    // Ask OpenRouter to include usage in the final stream chunk.
+    stream_options: { include_usage: true },
+  };
+  if (fallbacks.length) body.models = [model, ...fallbacks];
+  if (tools && tools.length) {
+    body.tools = tools;
+    body.tool_choice = "auto";
+    body.parallel_tool_calls = false;
+  }
+
+  const attemptStartedAt = Date.now();
+  logAgentLaunch({
+    requestId: observability?.requestId ?? "uncorrelated",
+    userId: observability?.userId,
+    projectId: observability?.projectId,
+    conversationId: observability?.conversationId,
+    event: "openrouter_attempt_started",
+    model,
+    attempt: 1,
+    maxAttempts: 1,
+  });
+
+  // Two-phase timeout: a controller that we reset after the first token and
+  // then after each subsequent chunk. The first phase is generous (reasoning
+  // models think before first output); the second is tighter (a stalled
+  // stream after output has started is a real problem).
+  const ctrl = new AbortController();
+  let firstTokenReceived = false;
+  const startTimeout = (ms: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ctrl.abort(), ms);
+  };
+  let timer = setTimeout(() => ctrl.abort(), STREAM_FIRST_TOKEN_TIMEOUT_MS);
+  const abort = () => ctrl.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+
+  try {
+    const response = await fetch(OR_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "X-Title": "GenWhisperer V2",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+
+    if (!response.ok) {
+      const status = response.status;
+      const message = await errorMessage(response);
+      const requestId = response.headers.get("x-request-id") ?? undefined;
+      throw new OpenRouterChatError(
+        `OpenRouter HTTP ${status}: ${message}`,
+        status,
+        isRetryableStatus(status),
+        requestId,
+      );
+    }
+    if (!response.body) {
+      throw new OpenRouterChatError("OpenRouter returned no stream body.", undefined, false);
+    }
+
+    // Parse the SSE stream. OpenRouter sends `data: {json}\n\n` frames.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    let toolCalls: NonNullable<NonNullable<ChatChoice["message"]>["tool_calls"]> | null = null;
+    let usage: ChatUsage | undefined;
+    let finishReason: string | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Reset the chunk timeout on every read — a live stream is fine.
+      if (firstTokenReceived) startTimeout(STREAM_CHUNK_TIMEOUT_MS);
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(payload) as {
+            choices?: Array<{
+              delta?: {
+                content?: string | null;
+                tool_calls?: Array<{
+                  index: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }> | null;
+              };
+              finish_reason?: string | null;
+            }>;
+            usage?: ChatUsage;
+          };
+          const choice = chunk.choices?.[0];
+          if (choice) {
+            const delta = choice.delta;
+            if (delta?.content) {
+              if (!firstTokenReceived) {
+                firstTokenReceived = true;
+                // Switch to the tighter per-chunk timeout now that output
+                // has started.
+                startTimeout(STREAM_CHUNK_TIMEOUT_MS);
+              }
+              content += delta.content;
+              onDelta?.({ content });
+            }
+            // Accumulate streamed tool_calls. OpenRouter streams tool-call
+            // arguments incrementally; we piece them together by index.
+            if (delta?.tool_calls) {
+              if (!toolCalls) toolCalls = [];
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index;
+                while (toolCalls.length <= idx) {
+                  toolCalls.push({
+                    id: "",
+                    type: "function",
+                    function: { name: "", arguments: "" },
+                  });
+                }
+                if (tc.id) toolCalls[idx].id = tc.id;
+                if (tc.function?.name) toolCalls[idx].function.name = tc.function.name;
+                if (tc.function?.arguments) toolCalls[idx].function.arguments += tc.function.arguments;
+              }
+            }
+            if (choice.finish_reason) finishReason = choice.finish_reason;
+          }
+          if (chunk.usage) usage = chunk.usage;
+        } catch {
+          /* malformed chunk — skip */
+        }
+      }
+    }
+
+    clearTimeout(timer);
+    logAgentLaunch({
+      requestId: observability?.requestId ?? "uncorrelated",
+      userId: observability?.userId,
+      projectId: observability?.projectId,
+      conversationId: observability?.conversationId,
+      event: "openrouter_attempt_succeeded",
+      model,
+      effectiveModel: model,
+      attempt: 1,
+      maxAttempts: 1,
+      upstreamRequestId: response.headers.get("x-request-id") ?? undefined,
+      durationMs: Date.now() - attemptStartedAt,
+    });
+
+    return {
+      choices: [
+        {
+          message: {
+            content: content || null,
+            tool_calls: toolCalls ?? null,
+          },
+        },
+      ],
+      usage,
+    };
+  } catch (e) {
+    clearTimeout(timer);
+    const err = e as Error;
+    if (err.name === "AbortError") {
+      throw Object.assign(new Error("OpenRouter chat aborted."), { name: "AbortError" });
+    }
+    if (err instanceof OpenRouterChatError) throw err;
+    const retryable = err instanceof TypeError;
+    logAgentLaunch({
+      requestId: observability?.requestId ?? "uncorrelated",
+      userId: observability?.userId,
+      projectId: observability?.projectId,
+      conversationId: observability?.conversationId,
+      event: "openrouter_attempt_failed",
+      model,
+      attempt: 1,
+      maxAttempts: 1,
+      durationMs: Date.now() - attemptStartedAt,
+      errorName: err.name,
+      errorMessage: err.message,
+    });
+    throw new OpenRouterChatError(`OpenRouter unreachable: ${err.message}`, undefined, retryable);
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
 /**
  * Compute the USD cost of a chat call from its usage + the model's per-token
  * pricing, accounting for cached prompt tokens. Mirrors the v12 addCost().
