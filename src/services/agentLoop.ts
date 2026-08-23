@@ -501,15 +501,28 @@ export async function runAgentLoop(
         finalAnswer = msg.content || "(no content)";
         safeEmit({ type: "final_answer", text: finalAnswer });
         // Persist the final assistant turn.
-        await appendMessage({
-          conversationId: conversationId as number,
-          role: "assistant",
-          content: finalAnswer,
-          promptTokens: resp.usage?.prompt_tokens,
-          completionTokens: resp.usage?.completion_tokens,
-          costUsd: totalCost,
-        });
-        await touchConversation(conversationId as number);
+        // DIAGNOSTIC: wrap in try/catch + log so the deploy logs show whether
+        // the assistant final-answer row is actually being inserted or why it
+        // isn't. The DB has been missing assistant rows on completed turns while
+        // agent_completed still fires — this will reveal the cause.
+        try {
+          console.log(`[diag] persisting final answer: conversationId=${conversationId}, contentLen=${finalAnswer.length}, promptTokens=${resp.usage?.prompt_tokens}, completionTokens=${resp.usage?.completion_tokens}, costUsd=${totalCost}, sinkClosed=${sink.closed()}`);
+          await appendMessage({
+            conversationId: conversationId as number,
+            role: "assistant",
+            content: finalAnswer,
+            promptTokens: resp.usage?.prompt_tokens,
+            completionTokens: resp.usage?.completion_tokens,
+            costUsd: totalCost,
+          });
+          console.log(`[diag] final answer persisted OK: conversationId=${conversationId}`);
+          await touchConversation(conversationId as number);
+        } catch (persistErr) {
+          console.error(`[diag] final answer PERSIST FAILED: conversationId=${conversationId}, error=`, persistErr);
+          // Re-throw so the loop's catch block sees it and emits an error event
+          // (otherwise the failure is silent and the user gets no answer on reload).
+          throw persistErr;
+        }
         break;
       }
     }
