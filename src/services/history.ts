@@ -68,13 +68,18 @@ export async function renameConversation(
 /**
  * Append a message to a conversation. role is system/user/assistant/tool.
  * toolCalls is the raw OpenRouter tool_calls array (for assistant turns that
- * emitted them); null otherwise. Tokens + cost are recorded per turn.
+ * emitted them); null otherwise. toolCallId + toolName are set only for
+ * role:"tool" result messages (required by OpenRouter/OpenAI chat completions
+ * so the tool result can be correlated to the assistant call it answers);
+ * null otherwise. Tokens + cost are recorded per turn.
  */
 export async function appendMessage(opts: {
   conversationId: number;
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   toolCalls?: unknown | null;
+  toolCallId?: string | null;
+  toolName?: string | null;
   promptTokens?: number;
   completionTokens?: number;
   costUsd?: number;
@@ -84,6 +89,8 @@ export async function appendMessage(opts: {
     role: opts.role,
     content: opts.content,
     toolCalls: opts.toolCalls ?? null,
+    toolCallId: opts.toolCallId ?? null,
+    toolName: opts.toolName ?? null,
     promptTokens: opts.promptTokens ?? 0,
     completionTokens: opts.completionTokens ?? 0,
     costUsd: (opts.costUsd ?? 0).toString(),

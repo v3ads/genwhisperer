@@ -214,6 +214,20 @@ export const messages = pgTable(
      * Null for plain user/assistant-text turns.
      */
     toolCalls: jsonb("tool_calls"),
+    /**
+     * For tool-result messages only: the tool_call_id this result answers
+     * (matches an entry in the preceding assistant turn's tool_calls[].id).
+     * Required by OpenRouter/OpenAI chat completions for role:"tool" messages;
+     * null for all other roles. Persisted so resumed conversations replay a
+     * well-formed tool message instead of one missing tool_call_id (which
+     * caused upstream HTTP 500s). See migration 0005.
+     */
+    toolCallId: text("tool_call_id"),
+    /**
+     * For tool-result messages only: the function name that produced this
+     * result (the name field on a role:"tool" chat message). Null otherwise.
+     */
+    toolName: text("tool_name"),
     promptTokens: integer("prompt_tokens").default(0).notNull(),
     completionTokens: integer("completion_tokens").default(0).notNull(),
     /** USD cost of this turn computed from usage × model pricing. */

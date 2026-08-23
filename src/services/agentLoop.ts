@@ -259,13 +259,49 @@ export async function runAgentLoop(
       for (const m of history) {
         // Skip the persisted system messages — we rebuilt them above.
         if (m.role === "system") continue;
+        // Defensive: a role:"tool" message MUST carry tool_call_id for
+        // OpenRouter/OpenAI to accept it. Legacy rows saved before migration
+        // 0005 lack it; replaying them would send a malformed tool message
+        // and trigger an upstream HTTP 500 on resume. Skip those orphan rows
+        // (their preceding assistant tool_calls is also dropped below) so a
+        // single legacy bad row can't poison the whole conversation. New rows
+        // always carry tool_call_id, so this only ever trims legacy data.
+        if (m.role === "tool" && (!m.toolCallId || !m.toolCallId.trim())) {
+          continue;
+        }
         messages.push({
           role: m.role,
           content: m.content,
           ...(m.toolCalls
             ? { tool_calls: m.toolCalls as ChatMessage["tool_calls"] }
             : {}),
+          ...(m.role === "tool" && m.toolCallId
+            ? { tool_call_id: m.toolCallId, name: m.toolName ?? undefined }
+            : {}),
         });
+      }
+
+      // Fail-open cleanup: if an assistant turn carries tool_calls but some of
+      // its tool_call_ids have no surviving role:"tool" result (e.g. a legacy
+      // orphan tool row was skipped above), OpenRouter/OpenAI reject the whole
+      // request ("tool call ids not found" / 400/500). Drop the tool_calls
+      // array from such assistant turns (keep their text content) so a legacy
+      // gap can't poison the resume. Only ever trims legacy/incomplete data;
+      // well-formed history is untouched.
+      const answeredIds = new Set(
+        messages
+          .filter((mm) => mm.role === "tool" && mm.tool_call_id)
+          .map((mm) => mm.tool_call_id as string)
+      );
+      for (const mm of messages) {
+        if (mm.role === "assistant" && mm.tool_calls) {
+          const allAnswered = mm.tool_calls.every(
+            (tc) => answeredIds.has(tc.id)
+          );
+          if (!allAnswered) {
+            mm.tool_calls = undefined;
+          }
+        }
       }
     }
 
@@ -386,6 +422,8 @@ export async function runAgentLoop(
                   conversationId: conversationId as number,
                   role: "tool",
                   content: guardResultText,
+                  toolCallId: tc.id,
+                  toolName: fn.name,
                 });
               }
               // Stop processing further tool calls in this batch and let the
@@ -424,10 +462,17 @@ export async function runAgentLoop(
             content: resultText,
           });
           // Persist the tool result message (conversationId is set by now).
+          // tool_call_id + name are required on role:"tool" chat messages so
+          // OpenRouter can correlate the result to the assistant call it
+          // answers; persist them so a resumed conversation replays a
+          // well-formed tool message instead of one missing tool_call_id
+          // (which triggered upstream HTTP 500s on resume).
           await appendMessage({
             conversationId: conversationId as number,
             role: "tool",
             content: resultText,
+            toolCallId: tc.id,
+            toolName: fn.name,
           });
         }
         if (stopped || sink.closed()) {
