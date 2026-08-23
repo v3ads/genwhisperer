@@ -89,4 +89,10 @@
   .app-nav .links{order:3;width:100%;justify-content:flex-start;overflow-x:auto;}
   .app-nav .user-chip{max-width:140px;}
   .app-main{padding:16px;}
+  /* Stack list rows on narrow screens: title/subtitle take the full first
+     line, action buttons wrap to a second line so the history details stay
+     readable on mobile. Applies to Conversations, Projects, and Admin rows. */
+  .list-row{flex-direction:column;align-items:stretch;gap:10px;}
+  .list-row .meta{width:100%;}
+  .list-row .actions{width:100%;justify-content:flex-start;flex-wrap:wrap;}
 }
