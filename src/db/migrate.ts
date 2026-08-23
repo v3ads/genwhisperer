@@ -1,27 +1,12 @@
 import "dotenv/config";
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import { migrate } from "drizzle-orm/neon-http/migrator";
-import path from "path";
-import { fileURLToPath } from "url";
+import { runMigrations } from "./runMigrations.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-async function runMigrations() {
-  console.log("🔄 Running database migrations...");
-
-  const sql = neon(process.env.NEON_DATABASE_URL!);
-  const db = drizzle(sql);
-
-  await migrate(db, {
-    migrationsFolder: path.resolve(__dirname, "../../drizzle/migrations"),
+// Standalone CLI runner: `npm run db:migrate` -> tsx src/db/migrate.ts.
+// The shared runMigrations() logic lives in runMigrations.ts so the server
+// startup sequence (src/index.ts) can also await it without process.exit.
+runMigrations()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("❌ Migration failed:", err);
+    process.exit(1);
   });
-
-  console.log("✅ Migrations complete.");
-  process.exit(0);
-}
-
-runMigrations().catch((err) => {
-  console.error("❌ Migration failed:", err);
-  process.exit(1);
-});

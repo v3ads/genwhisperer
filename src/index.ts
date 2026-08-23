@@ -17,6 +17,7 @@ import adminRouter from "./routes/admin.js";
 import billingRouter from "./routes/billing.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
+import { runMigrations } from "./db/runMigrations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app: ReturnType<typeof express> = express();
@@ -203,14 +204,25 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 // Bind to 0.0.0.0 so Railway (and Docker) can reach the process.
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 GenWhisperer running on http://0.0.0.0:${PORT}`);
-  console.log(`   Environment : ${process.env.NODE_ENV ?? "development"}`);
-  console.log(`   Frontend    : ${FRONTEND_DIST}`);
-  console.log(`   CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
+// Run DB migrations BEFORE binding so the schema matches the code before any
+// request is served, and a migration failure stops the server from starting
+// (fail loud rather than serving an app with a stale schema). Migrations are
+// idempotent, so running on every boot is safe and self-heals drift.
+runMigrations()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 GenWhisperer running on http://0.0.0.0:${PORT}`);
+      console.log(`   Environment : ${process.env.NODE_ENV ?? "development"}`);
+      console.log(`   Frontend    : ${FRONTEND_DIST}`);
+      console.log(`   CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
 
-  // Background pruning of expired magic links and revoked sessions.
-  startCleanupJobs();
-});
+      // Background pruning of expired magic links and revoked sessions.
+      startCleanupJobs();
+    });
+  })
+  .catch((err) => {
+    console.error("❌ Startup migration failed — server not started:", err);
+    process.exit(1);
+  });
 
 export default app;
