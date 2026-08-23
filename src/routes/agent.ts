@@ -253,6 +253,9 @@ router.post("/approve/:gateId", requireAuth, async (req: AuthRequest, res) => {
 router.get("/conversations", requireAuth, async (req: AuthRequest, res) => {
   const userId = req.user!.id;
   const list = await listConversations(userId);
+  // no-store: the list changes as conversations are created/updated, so a
+  // cached 304 would show a stale History page.
+  res.set("Cache-Control", "no-store");
   res.json({
     conversations: list.map((c) => ({
       id: c.id,
@@ -280,6 +283,14 @@ router.get("/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
     return;
   }
   const history = await loadHistory(id);
+  // Conversation history changes whenever a message is added, so it must not be
+  // cached. Express auto-generates an ETag for JSON responses and returns 304
+  // on a matching If-None-Match — which gives the browser a stale history (from
+  // before the latest assistant turn) and, because the frontend request() helper
+  // treats 304 as an error (!res.ok), the resume loader silently fails and the
+  // conversation renders with missing/no messages. no-store forces a fresh 200
+  // with the full body on every load.
+  res.set("Cache-Control", "no-store");
   res.json({
     conversation: {
       id: conv.id,

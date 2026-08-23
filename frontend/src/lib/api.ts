@@ -112,6 +112,26 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     ...opts,
   });
 
+  // 304 Not Modified: Express auto-generates ETags for JSON responses, so a
+  // browser that cached a prior response re-sends If-None-Match and gets a 304
+  // with no body. For endpoints whose data changes (e.g. conversation history
+  // after a new turn), this serves a stale view and — because 304 is not
+  // res.ok — would throw below, silently breaking resume. Re-fetch once
+  // unconditionally (cache-busting) to force a fresh 200 with the full body.
+  if (res.status === 304) {
+    const fresh = await fetch(`${BASE}${path}`, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+      ...opts,
+      cache: "no-store",
+    });
+    if (fresh.ok) {
+      if (fresh.status === 204) return undefined as T;
+      return (await fresh.json()) as T;
+    }
+    // fall through to error handling with the original response
+  }
+
   if (!res.ok) {
     let payload: unknown = null;
     let message = `Request failed (${res.status})`;
