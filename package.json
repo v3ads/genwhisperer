@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "cd frontend && npm ci && npm run build && cd .. && tsc -p tsconfig.build.json && cp -R drizzle/migrations dist/migrations",
-    "build:server": "tsc -p tsconfig.build.json && cp -R drizzle/migrations dist/migrations",
+    "build": "cd frontend && npm ci && npm run build && cd .. && tsc -p tsconfig.build.json",
+    "build:server": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
