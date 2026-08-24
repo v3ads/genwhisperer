@@ -567,9 +567,35 @@ export default function Builder() {
                       </>
                     )}
                     <textarea
-                      placeholder={modelSupportsImages ? "Describe what you want to build or change. Attach an image with + if needed…" : "Describe what you want to build or change…"}
+                      placeholder={modelSupportsImages ? "Describe what you want to build or change. Attach an image with + or paste it here…" : "Describe what you want to build or change…"}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
+                      onPaste={(e) => {
+                        // If the user pastes an image (from clipboard, screenshot,
+                        // or copied image), capture it as the pending image —
+                        // same as the + button. Only for vision-capable models.
+                        if (!modelSupportsImages || busy) return;
+                        const items = e.clipboardData?.items;
+                        if (!items) return;
+                        for (const item of items) {
+                          if (item.type.startsWith("image/")) {
+                            const file = item.getAsFile();
+                            if (!file) return;
+                            if (file.size > 4 * 1024 * 1024) {
+                              alert("Image must be under 4MB.");
+                              e.preventDefault();
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => setPendingImage(reader.result as string);
+                            reader.readAsDataURL(file);
+                            // Prevent the image filename/placeholder text
+                            // from being pasted into the textarea.
+                            e.preventDefault();
+                            return;
+                          }
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
                       }}
