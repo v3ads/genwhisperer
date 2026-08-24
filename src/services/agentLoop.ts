@@ -483,11 +483,36 @@ export async function runAgentLoop(
               // batch after the first was rejected for missing args).
               break;
             }
-            // DuplicateToolCallBlocked — genuine circuit-breaker, halt the run.
-            errorMessage = toolGuard.message;
+            // DuplicateToolCallBlocked — recoverable: feed the rejection back to
+            // the model as a tool result so it can self-correct and try a
+            // different approach, instead of hard-halting. Previously this was
+            // a hard halt, which trapped the user in a loop: the model would
+            // re-emit the same call on the next turn (the guard resets per-run),
+            // hit the block again, and halt again — "continue" just restarted
+            // the cycle. Feeding the rejection back (like InvalidToolArguments
+            // already does) lets the model see "you already tried this exact
+            // operation" and re-plan. MAX_ITERATIONS bounds the total turns.
             logAgentLaunch({ ...launchBase, event: "tool_failed", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt, errorName: toolGuard.errorName, errorMessage: toolGuard.message });
-            safeEmit({ type: "error", message: errorMessage });
-            stopped = true;
+            safeEmit({ type: "status", text: "Adjusting approach after a repeated operation…" });
+            const dupGuardResultText = `Error: ${toolGuard.message} You already attempted this exact operation earlier in this run. Try a different approach — use different arguments, a different tool, or describe what you want to change and proceed without repeating the same call.`;
+            messages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              name: fn.name,
+              content: dupGuardResultText,
+            });
+            if (conversationId) {
+              await appendMessage({
+                conversationId: conversationId as number,
+                role: "tool",
+                content: dupGuardResultText,
+                toolCallId: tc.id,
+                toolName: fn.name,
+              });
+            }
+            // Stop processing further tool calls in this batch and let the
+            // while-loop re-iterate so the model sees the guard result and
+            // can re-plan.
             break;
           }
 
