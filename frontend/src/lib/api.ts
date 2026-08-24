@@ -22,10 +22,11 @@ export interface OrModel {
   name?: string;
   context_length?: number;
   supported_parameters?: string[];
+  architecture?: { input_modalities?: string[] };
   pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
   _group?: string;
   /** Set by fetchModels: true when the model supports image/vision input
-   *  (OpenRouter's supported_parameters includes "image"). */
+   *  (architecture.input_modalities includes "image"). */
   _supportsImages?: boolean;
 }
 

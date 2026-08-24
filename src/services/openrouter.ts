@@ -33,6 +33,9 @@ export interface OrModel {
   name?: string;
   context_length?: number;
   supported_parameters?: string[];
+  /** OpenRouter model architecture — includes input_modalities
+   *  (e.g. ["text", "image"]) which tells us if a model supports vision. */
+  architecture?: { input_modalities?: string[] };
   pricing?: {
     prompt?: string;
     completion?: string;
@@ -40,7 +43,8 @@ export interface OrModel {
   };
   /** Added by fetchModels: "Recommended" | "All capable models" */
   _group?: string;
-  /** Added by fetchModels: true when the model supports image/vision input. */
+  /** Added by fetchModels: true when the model supports image/vision input
+   *  (architecture.input_modalities includes "image"). */
   _supportsImages?: boolean;
 }
 
@@ -134,10 +138,11 @@ export async function fetchModels(apiKey: string): Promise<OrModel[]> {
     if (id.endsWith(":free")) return false;
     if (id.endsWith(":batch")) return false; // async batch mode — not interactive
     if (id.includes(":nitro")) return false; // routing variant, not a different model
-    // Flag vision-capable models (OpenRouter's supported_parameters includes "image").
-    // Used by the frontend model picker to show an "image" badge and by the Builder
-    // to show the image-upload note.
-    (m as OrModel)._supportsImages = (m.supported_parameters || []).includes("image");
+    // Flag vision-capable models. OpenRouter exposes this as
+    // architecture.input_modalities (e.g. ["text", "image"]), NOT in
+    // supported_parameters. Used by the frontend model picker to show an
+    // "image" badge and by the Builder to show the image-upload note.
+    (m as OrModel)._supportsImages = (m.architecture?.input_modalities || []).includes("image");
     return true;
   });
 
