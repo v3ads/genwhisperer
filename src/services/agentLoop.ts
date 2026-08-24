@@ -150,6 +150,10 @@ export interface AgentRunInput {
    *  shorter history" button on timeout. Does NOT delete persisted history;
    *  only trims what's sent to the model this turn. */
   compressHistory?: boolean;
+  /** Optional base64 data URL of an image to attach to the user's message.
+   *  Sent to OpenRouter as an OpenAI-style image content part alongside
+   *  the text. Only meaningful for vision-capable models. */
+  image?: string;
 }
 
 /** Result summary of a run (for logging / AITable). */
@@ -333,8 +337,16 @@ export async function runAgentLoop(
       }
     }
 
-    // Append the new user message.
-    messages.push({ role: "user", content: input.userMessage });
+    // Append the new user message. When an image is attached, send it as
+    // an OpenAI-style multimodal content array (text + image_url) instead
+    // of a plain string. The image is a base64 data URL from the frontend.
+    const userContent: ChatMessage["content"] = input.image
+      ? [
+          { type: "text", text: input.userMessage || "What's in this image?" },
+          { type: "image_url", image_url: { url: input.image } },
+        ]
+      : input.userMessage;
+    messages.push({ role: "user", content: userContent });
     await appendMessage({
       conversationId: conversationId as number,
       role: "user",

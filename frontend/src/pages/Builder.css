@@ -33,6 +33,25 @@
   padding:4px 0 0;margin-top:4px;
 }
 
+/* image attach button (+) — only shown for vision-capable models */
+.b-attach{
+  flex-shrink:0;background:var(--navy-1);border:1px solid var(--line);border-radius:9px;
+  color:var(--text-dim);font-size:18px;font-weight:600;
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:border-color .15s,color .15s;line-height:1;
+}
+.b-attach:hover{border-color:var(--cyan-line);color:var(--cyan);}
+
+/* pending image preview (thumbnail + remove) */
+.img-preview{position:relative;margin-bottom:6px;}
+.img-preview .img-thumb{max-height:80px;max-width:120px;border-radius:8px;border:1px solid var(--line);}
+.img-preview .img-remove{
+  position:absolute;top:-6px;left:108px;
+  background:var(--navy-1);border:1px solid var(--danger);border-radius:50%;
+  color:var(--danger);width:20px;height:20px;font-size:13px;line-height:1;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+}
+
 /* running cost badge */
 .cost-badge{
   display:inline-flex;align-items:center;gap:6px;flex-shrink:0;

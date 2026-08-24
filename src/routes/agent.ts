@@ -62,6 +62,10 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
      *  model can produce its first token within the stream timeout. Used by
      *  the "Retry with shorter history" button on timeout. */
     compressHistory: z.boolean().optional().default(false),
+    /** Optional base64 data URL of an image to attach to the user's message
+     *  (only for vision-capable models). Sent as an OpenAI-style image
+     *  content part alongside the text. */
+    image: z.string().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -71,7 +75,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   }
 
   const userId = req.user!.id;
-  const { genesisProjectId, message, model, compressHistory } = parsed.data;
+  const { genesisProjectId, message, model, compressHistory, image } = parsed.data;
   const conversationId = parsed.data.conversationId ?? null;
 
   // ── Tier gate: lapsed users can't start turns; trial users hit the turn cap ──
@@ -199,6 +203,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
       model: chosenModel,
       userMessage: message,
       compressHistory,
+      image,
     },
     sink
   );
