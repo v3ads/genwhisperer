@@ -64,8 +64,9 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     compressHistory: z.boolean().optional().default(false),
     /** Optional base64 data URL of an image to attach to the user's message
      *  (only for vision-capable models). Sent as an OpenAI-style image
-     *  content part alongside the text. */
-    image: z.string().optional(),
+     *  content part alongside the text. Nullable because the frontend
+     *  sends null (not undefined) when there is no pending image. */
+    image: z.string().nullable().optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
