@@ -152,8 +152,9 @@ export interface AgentRunInput {
   compressHistory?: boolean;
   /** Optional base64 data URL of an image to attach to the user's message.
    *  Sent to OpenRouter as an OpenAI-style image content part alongside
-   *  the text. Only meaningful for vision-capable models. */
-  image?: string;
+   *  the text. Only meaningful for vision-capable models. Nullable because
+   *  the frontend sends null when there is no pending image. */
+  image?: string | null;
 }
 
 /** Result summary of a run (for logging / AITable). */
