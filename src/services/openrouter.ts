@@ -40,6 +40,8 @@ export interface OrModel {
   };
   /** Added by fetchModels: "Recommended" | "All capable models" */
   _group?: string;
+  /** Added by fetchModels: true when the model supports image/vision input. */
+  _supportsImages?: boolean;
 }
 
 /** OpenAI-style chat message used in requests to /chat/completions. */
@@ -132,6 +134,10 @@ export async function fetchModels(apiKey: string): Promise<OrModel[]> {
     if (id.endsWith(":free")) return false;
     if (id.endsWith(":batch")) return false; // async batch mode — not interactive
     if (id.includes(":nitro")) return false; // routing variant, not a different model
+    // Flag vision-capable models (OpenRouter's supported_parameters includes "image").
+    // Used by the frontend model picker to show an "image" badge and by the Builder
+    // to show the image-upload note.
+    (m as OrModel)._supportsImages = (m.supported_parameters || []).includes("image");
     return true;
   });
 

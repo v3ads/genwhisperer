@@ -330,10 +330,13 @@ export default function Builder() {
     const ctxK = Math.round((m.context_length || 0) / 1000);
     const price = m.pricing && parseFloat(m.pricing.prompt || "0");
     const priceStr = price ? `$${(price * 1e6).toFixed(2)}/M` : "—";
-    return `${m.name || m.id} — ${ctxK}k · ${priceStr}`;
+    const imgBadge = m._supportsImages ? " 📷 image" : "";
+    return `${m.name || m.id} — ${ctxK}k · ${priceStr}${imgBadge}`;
   };
 
   const costClass = cost >= 1.0 ? "high" : cost >= 0.25 ? "warn" : "";
+  // Whether the currently-selected model supports image/vision input.
+  const modelSupportsImages = models.find((m) => m.id === model)?._supportsImages ?? false;
 
   // The currently-selected project (for the Genesis open-in-builder link).
   const currentProject = projects.find((p) => p.id === projectId) || null;
@@ -540,6 +543,9 @@ export default function Builder() {
                     )}
                   </div>
                   <div className={`b-hint ${hint !== "Enter to send · Shift+Enter for newline" ? "active" : ""}`}>{hint}</div>
+                  {!modelSupportsImages && (
+                    <div className="img-note">Need to upload an image to reference? Switch to a model that supports image (📷) in the model picker above.</div>
+                  )}
                 </div>
               </>
             )}

@@ -77,7 +77,8 @@ export default function Profile() {
     const ctxK = Math.round((m.context_length || 0) / 1000);
     const price = m.pricing && parseFloat(m.pricing.prompt || "0");
     const priceStr = price ? `$${(price * 1e6).toFixed(2)}/M` : "—";
-    return `${m.name || m.id} — ${ctxK}k ctx · ${priceStr}`;
+    const imgBadge = m._supportsImages ? " 📷 image" : "";
+    return `${m.name || m.id} — ${ctxK}k ctx · ${priceStr}${imgBadge}`;
   };
 
   return (
