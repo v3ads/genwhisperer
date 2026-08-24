@@ -24,6 +24,9 @@ export interface OrModel {
   supported_parameters?: string[];
   pricing?: { prompt?: string; completion?: string; input_cache_read?: string };
   _group?: string;
+  /** Set by fetchModels: true when the model supports image/vision input
+   *  (OpenRouter's supported_parameters includes "image"). */
+  _supportsImages?: boolean;
 }
 
 export interface Profile {
