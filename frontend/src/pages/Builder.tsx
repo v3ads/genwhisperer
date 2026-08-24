@@ -63,6 +63,10 @@ export default function Builder() {
   // Set when the backend signals a timeout_retry_available event; holds the
   // conversationId to retry with compressed history. Cleared on send/stop.
   const [retryAvailable, setRetryAvailable] = useState<number | null>(null);
+  // Pending image attachment (base64 data URL) for the next message.
+  // Set when the user picks an image via the + button; cleared on send.
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -192,13 +196,18 @@ export default function Builder() {
   async function send(compressHistory = false) {
     const text = input.trim();
     // Block submission while the empty-project guard is up.
-    if (!text || busy || !projectId || noPagesProjectId !== null) return;
+    // Allow send with an image even if text is empty (the user might just
+    // share an image with no message). But require either text or an image.
+    if (busy || !projectId || noPagesProjectId !== null) return;
+    if (!text && !pendingImage) return;
+    const imageToSend = pendingImage;
     setInput("");
+    setPendingImage(null);
     setBusy(true);
     setElapsed(0);
     setRetryAvailable(null);
     setHint("Initiating your request…");
-    addRow("user", text);
+    addRow("user", text || "📎 Shared an image");
 
     // Start an elapsed-seconds counter so the user sees time passing
     // instead of a static line during long agent turns.
@@ -213,7 +222,7 @@ export default function Builder() {
 
     try {
       await streamAgent(
-        { genesisProjectId: projectId, conversationId: conversationId ?? undefined, message: text, model, compressHistory },
+        { genesisProjectId: projectId, conversationId: conversationId ?? undefined, message: text, model, compressHistory, image: imageToSend },
         {
           onStatus: (t) => setHint(t),
           onNarration: (t) => addRow("narration", t),
@@ -520,9 +529,45 @@ export default function Builder() {
 
                 {/* composer */}
                 <div className="b-composer">
+                  {pendingImage && (
+                    <div className="img-preview">
+                      <img src={pendingImage} alt="Pending upload" className="img-thumb" />
+                      <button className="img-remove" type="button" onClick={() => setPendingImage(null)} aria-label="Remove image" title="Remove image">×</button>
+                    </div>
+                  )}
                   <div className="b-composer-row">
+                    {modelSupportsImages && !busy && (
+                      <>
+                        <button
+                          className="b-attach"
+                          type="button"
+                          onClick={() => imageInputRef.current?.click()}
+                          aria-label="Attach image"
+                          title="Attach an image for the model to reference"
+                        >+</button>
+                        <input
+                          ref={imageInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          style={{ display: "none" }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 4 * 1024 * 1024) {
+                              alert("Image must be under 4MB.");
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => setPendingImage(reader.result as string);
+                            reader.readAsDataURL(file);
+                            // Reset so the same file can be picked again
+                            e.target.value = "";
+                          }}
+                        />
+                      </>
+                    )}
                     <textarea
-                      placeholder="Describe what you want to build or change…"
+                      placeholder={modelSupportsImages ? "Describe what you want to build or change. Attach an image with + if needed…" : "Describe what you want to build or change…"}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -539,7 +584,7 @@ export default function Builder() {
                     {busy ? (
                       <button className="b-stop" onClick={stop}>Stop</button>
                     ) : (
-                      <button className="b-send" onClick={() => void send()} disabled={!input.trim() || !projectId}>Send</button>
+                      <button className="b-send" onClick={() => void send()} disabled={(!input.trim() && !pendingImage) || !projectId}>Send</button>
                     )}
                   </div>
                   <div className={`b-hint ${hint !== "Enter to send · Shift+Enter for newline" ? "active" : ""}`}>{hint}</div>

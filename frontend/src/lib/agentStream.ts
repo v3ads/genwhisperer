@@ -50,6 +50,9 @@ export interface AgentStreamInput {
   /** When true, the server trims replayed history to the last few turns
    *  before sending to the model — reduces context for the retry. */
   compressHistory?: boolean;
+  /** Optional base64 data URL of an image to attach to the message
+   *  (only for vision-capable models). */
+  image?: string | null;
 }
 
 const STREAM_START_MAX_ATTEMPTS = 3;
@@ -92,6 +95,7 @@ export async function streamAgent(
           message: input.message,
           model: input.model,
           compressHistory: input.compressHistory,
+          image: input.image,
         }),
         signal,
       });

@@ -51,7 +51,9 @@ export interface OrModel {
 /** OpenAI-style chat message used in requests to /chat/completions. */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  /** Either a plain string (text-only) or an array of content parts
+   *  (multimodal: text + image_url) per the OpenAI chat format. */
+  content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
   /** Present on assistant messages that emit tool_calls. */
   tool_calls?: Array<{
     id: string;
