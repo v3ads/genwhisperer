@@ -345,7 +345,13 @@ export default function Builder() {
 
   const costClass = cost >= 1.0 ? "high" : cost >= 0.25 ? "warn" : "";
   // Whether the currently-selected model supports image/vision input.
-  const modelSupportsImages = models.find((m) => m.id === model)?._supportsImages ?? false;
+  // Check the models array first (set from the OpenRouter API response),
+  // with a prefix fallback for known vision model families in case the
+  // models array is momentarily stale during a re-render.
+  const VISION_PREFIXES = ["openai/gpt", "anthropic/claude", "google/gemini", "xai/grok"];
+  const modelSupportsImages =
+    models.find((m) => m.id === model)?._supportsImages ??
+    VISION_PREFIXES.some((p) => model.startsWith(p));
 
   // The currently-selected project (for the Genesis open-in-builder link).
   const currentProject = projects.find((p) => p.id === projectId) || null;
