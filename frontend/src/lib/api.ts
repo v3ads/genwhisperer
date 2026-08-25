@@ -319,6 +319,14 @@ export interface SubscriptionState {
   usePlatformKey: boolean;
   statusLabel: string;
   hasStripeCustomer: boolean;
+  /** Free-access mode: no paywall — BYO OpenRouter key after the intro turns. */
+  freeMode: boolean;
+  /** Whether the user has their own OpenRouter key saved. */
+  hasOwnKey: boolean;
+  /** True when saving an OpenRouter key is the only thing blocking the user. */
+  needsOwnKey: boolean;
+  /** Where users send testimonials while access is free. */
+  testimonialEmail: string;
 }
 
 export const billing = {

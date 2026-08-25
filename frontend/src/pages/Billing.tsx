@@ -74,9 +74,32 @@ export default function Billing() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
                 <Stat label="Tier" value={tierLabel(sub.tier)} />
                 <Stat label="Projects" value={sub.maxProjects === null ? "Unlimited" : `${sub.maxProjects}`} />
-                <Stat label="Agent turns" value={sub.tier === "trial" ? `${sub.trialTurnCap - sub.trialTurnsUsed} of ${sub.trialTurnCap} left` : "Unlimited"} />
-                <Stat label="Status" value={sub.canStartTurn ? "Active" : "Limited"} />
+                <Stat
+                  label="Agent turns"
+                  value={
+                    sub.freeMode
+                      ? sub.usePlatformKey
+                        ? `Unlimited · ${sub.trialTurnCap - sub.trialTurnsUsed} intro turn${sub.trialTurnCap - sub.trialTurnsUsed === 1 ? "" : "s"} on our key`
+                        : "Unlimited (your key)"
+                      : sub.tier === "trial"
+                        ? `${sub.trialTurnCap - sub.trialTurnsUsed} of ${sub.trialTurnCap} left`
+                        : "Unlimited"
+                  }
+                />
+                <Stat label="Status" value={sub.canStartTurn ? "Active" : sub.needsOwnKey ? "Needs your key" : "Limited"} />
               </div>
+
+              {sub.freeMode && !isAdmin && (
+                <div className="banner banner-ok" style={{ marginTop: 0, marginBottom: 18 }}>
+                  GenWhisperer is free right now — no subscription needed. Your first{" "}
+                  {sub.trialTurnCap} turns run on our OpenRouter key; after that, add your own key
+                  in Profile and keep building free. Enjoying it? We'd love a testimonial at{" "}
+                  <a href={`mailto:${sub.testimonialEmail}?subject=GenWhisperer%20testimonial`} style={{ color: "var(--cyan)", textDecoration: "underline" }}>
+                    {sub.testimonialEmail}
+                  </a>
+                  .
+                </div>
+              )}
 
               {isAdmin ? (
                 <div className="banner banner-ok" style={{ margin: 0 }}>

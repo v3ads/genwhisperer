@@ -79,15 +79,28 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   const { genesisProjectId, message, model, compressHistory, image } = parsed.data;
   const conversationId = parsed.data.conversationId ?? null;
 
-  // ── Tier gate: lapsed users can't start turns; trial users hit the turn cap ──
+  // ── Access gate ───────────────────────────────────────────────────────────
+  // Free-access mode: the only stop is "we need your own OpenRouter key now"
+  // (after the intro turns on our platform key) — a setup step, not a paywall,
+  // so it answers 400 with needsOwnKey and plain-language copy. Outside free
+  // mode this is the original billing gate (lapsed / trial cap) at 402.
   const tierState = await getTierState(userId);
   if (!tierState.canStartTurn) {
-    logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 402, errorName: "BillingGate" });
-    res.status(402).json({
+    const status = tierState.needsOwnKey ? 400 : 402;
+    logAgentLaunch({
+      requestId,
+      event: "request_rejected",
+      userId,
+      projectId: genesisProjectId,
+      httpStatus: status,
+      errorName: tierState.needsOwnKey ? "OwnKeyRequired" : "BillingGate",
+    });
+    res.status(status).json({
       error: tierState.statusLabel,
       tier: tierState.tier,
       trialTurnsUsed: tierState.trialTurnsUsed,
       trialTurnCap: tierState.trialTurnCap,
+      needsOwnKey: tierState.needsOwnKey,
     });
     return;
   }

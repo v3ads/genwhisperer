@@ -24,6 +24,7 @@ import {
   type PlanKey,
 } from "../services/stripe.js";
 import { getTierState, applySubscriptionUpdate, markLapsed } from "../services/billing.js";
+import { TESTIMONIAL_EMAIL } from "../services/settings.js";
 import { z } from "zod";
 
 const router: ReturnType<typeof Router> = Router();
@@ -67,6 +68,10 @@ router.get("/subscription", requireAuth, async (req: AuthRequest, res) => {
     usePlatformKey: state.usePlatformKey,
     statusLabel: state.statusLabel,
     hasStripeCustomer: !!customerId,
+    freeMode: state.freeMode,
+    hasOwnKey: state.hasOwnKey,
+    needsOwnKey: state.needsOwnKey,
+    testimonialEmail: TESTIMONIAL_EMAIL,
   });
 });
 

@@ -34,6 +34,29 @@ export async function setSetting(key: string, value: string): Promise<void> {
   cache.set(key, value);
 }
 
+// ─── Free-access mode ────────────────────────────────────────────────────────
+// While GenWhisperer is gathering testimonials, access is free: the trial turn
+// cap stops being a paywall and becomes the point where a user switches from
+// our platform OpenRouter key to their own. Stored in system_settings so it can
+// be flipped off (restoring the paid gate) without a redeploy, and DEFAULTED ON
+// in code so it works with no DB row present — no migration required.
+export const FREE_MODE_KEY = "free_mode";
+
+/** Email address users send testimonials to (surfaced in the free-access banner). */
+export const TESTIMONIAL_EMAIL =
+  process.env.TESTIMONIAL_EMAIL?.trim() || "support@genwhisperer.com";
+
+/**
+ * Whether free-access mode is on. Defaults to TRUE when the setting is absent.
+ * Set system_settings.free_mode to "off" (or "false"/"0") to restore paid gating.
+ */
+export async function isFreeMode(): Promise<boolean> {
+  const val = await getSetting(FREE_MODE_KEY);
+  if (val === null) return true;
+  const v = val.trim().toLowerCase();
+  return v !== "off" && v !== "false" && v !== "0";
+}
+
 export function invalidateCache(key?: string) {
   if (key) cache.delete(key);
   else cache.clear();
