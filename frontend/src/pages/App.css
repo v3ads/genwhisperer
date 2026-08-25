@@ -109,6 +109,27 @@
 /* small inline link */
 .link-inline{color:var(--cyan);border-bottom:1px solid var(--cyan-line);padding-bottom:1px;cursor:pointer;}
 .link-inline:hover{color:var(--teal);}
+/* a <button> styled to read as an inline link (no default button chrome) */
+.link-btn{background:none;border:none;padding:0;font:inherit;}
+
+/* ---- generic modal (e.g. the project-limit upgrade prompt) ---- */
+.modal-backdrop{
+  position:fixed;inset:0;z-index:50;display:flex;align-items:flex-start;justify-content:center;
+  padding:48px 16px;overflow-y:auto;background:#02060ecc;backdrop-filter:blur(3px);
+}
+.modal-panel{
+  position:relative;width:100%;max-width:560px;background:var(--navy-2);
+  border:1px solid var(--line);border-radius:var(--r);padding:24px 28px 28px;
+  box-shadow:0 24px 60px #000a;
+}
+.modal-panel.modal-wide{max-width:920px;}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px;}
+.modal-head h2{font-size:20px;}
+.modal-x{
+  flex-shrink:0;background:none;border:none;cursor:pointer;color:var(--text-faint);
+  font-size:24px;line-height:1;padding:2px 8px;border-radius:6px;
+}
+.modal-x:hover{color:var(--text);background:var(--navy-3);}
 
 @media (max-width:640px){
   .app-nav{gap:10px;padding:12px 16px;flex-wrap:wrap;}

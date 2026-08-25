@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppNav } from "../components/AppNav";
-import { projects as projectsApi, ApiError, type Project } from "../lib/api";
+import { PricingBlock } from "../components/PricingBlock";
+import { projects as projectsApi, ApiError, type Project, type Tier } from "../lib/api";
 import "./App.css";
 
 /**
@@ -15,7 +16,12 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [limitHit, setLimitHit] = useState(false);
+  // The tier the 402 limit response reported (drives which plan card reads
+  // "Current plan" inside the upgrade modal). Kept separately from
+  // `showUpgrade` so re-opening the modal after closing it doesn't need a
+  // fresh 402 round-trip.
+  const [limitTier, setLimitTier] = useState<Tier | null>(null);
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
   // add-form state
   const [name, setName] = useState("");
@@ -46,8 +52,13 @@ export default function Projects() {
       void load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 402) {
+        // Project-limit gate. Show the upgrade modal with the actual plan
+        // options rather than just a text link — the server response tells us
+        // which tier the user is currently on so PricingBlock can mark it.
+        const payload = (e.payload ?? {}) as { tier?: Tier };
         setErr(e.message);
-        setLimitHit(true);
+        setLimitTier(payload.tier ?? "trial");
+        setShowUpgrade(true);
       } else {
         setErr(e instanceof ApiError ? e.message : "Could not add project.");
       }
@@ -87,8 +98,8 @@ export default function Projects() {
         {err && (
           <div className="banner banner-err">
             {err}
-            {limitHit && (
-              <> &nbsp;<a className="link-inline" href="/billing">Upgrade your plan →</a></>
+            {limitTier && !showUpgrade && (
+              <> &nbsp;<button className="link-inline link-btn" onClick={() => setShowUpgrade(true)}>See upgrade options →</button></>
             )}
           </div>
         )}
@@ -103,7 +114,7 @@ export default function Projects() {
           </p>
 
           {!showAdd ? (
-            <button className="btn btn-primary" onClick={() => { setShowAdd(true); setErr(null); setLimitHit(false); }} style={{ width: "auto" }}>
+            <button className="btn btn-primary" onClick={() => { setShowAdd(true); setErr(null); setLimitTier(null); setShowUpgrade(false); }} style={{ width: "auto" }}>
               + Add project
             </button>
           ) : (
@@ -159,6 +170,23 @@ export default function Projects() {
           )}
         </div>
       </main>
+
+      {/* ── Upgrade modal: shown when the project-limit gate (402) fires ──── */}
+      {showUpgrade && limitTier && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowUpgrade(false)}>
+          <div className="modal-panel modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>You can upgrade to a higher tier</h2>
+              <button className="modal-x" onClick={() => setShowUpgrade(false)} aria-label="Close">×</button>
+            </div>
+            <p className="sub" style={{ marginBottom: 20 }}>
+              Your current plan's project limit is reached. Pick a plan below to add more Genesis
+              projects — you can also manage this any time from Billing.
+            </p>
+            <PricingBlock currentTier={limitTier} compact />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
