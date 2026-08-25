@@ -15,11 +15,20 @@
  *             cannot start new agent turns).
  *
  * Admins bypass all gating (unlimited).
+ *
+ * FREE-ACCESS MODE (see services/settings.ts `free_mode`, default ON):
+ * while we're gathering testimonials, the trial turn cap is no longer a
+ * paywall — it's the handover point from our platform OpenRouter key to the
+ * user's own. Turns 1..cap run on the platform key exactly as before; from
+ * then on the user needs their own key and gets unlimited free turns with it.
+ * Lapsed users get the same deal. `canStartTurn` and `usePlatformKey` were
+ * previously welded to the same condition, which is why hitting the cap
+ * blocked the user instead of switching them over — free mode separates them.
  */
 
 import { eq } from "drizzle-orm";
-import { db, subscriptions, users } from "../db/index.js";
-import { getSetting } from "./settings.js";
+import { db, subscriptions, userApiKeys, users } from "../db/index.js";
+import { getSetting, isFreeMode } from "./settings.js";
 
 export type Tier = "trial" | "starter" | "pro" | "lapsed";
 
@@ -37,6 +46,16 @@ export interface TierState {
   usePlatformKey: boolean;
   /** Human-readable status for the UI. */
   statusLabel: string;
+  /** Whether free-access mode is on (no paywall; BYO key after the intro turns). */
+  freeMode: boolean;
+  /** Whether the user has their own OpenRouter key saved. */
+  hasOwnKey: boolean;
+  /**
+   * True when the ONLY thing standing between the user and building is saving
+   * their own OpenRouter key. Lets the UI show a "add your key in Profile"
+   * prompt instead of an upgrade/paywall prompt.
+   */
+  needsOwnKey: boolean;
 }
 
 const DEFAULT_TRIAL_TURN_CAP = 2;
@@ -72,6 +91,8 @@ export async function getTierState(userId: number): Promise<TierState> {
   const tier = sub.tier as Tier;
   const trialTurnCap = await getTrialTurnCap();
   const trialTurnsUsed = sub.trialTurnsUsed;
+  const freeMode = await isFreeMode();
+  const hasOwnKey = await userHasOwnKey(userId);
 
   if (isAdmin) {
     return {
@@ -82,10 +103,51 @@ export async function getTierState(userId: number): Promise<TierState> {
       canStartTurn: true,
       usePlatformKey: false,
       statusLabel: "Admin (unlimited)",
+      freeMode,
+      hasOwnKey,
+      needsOwnKey: false,
     };
   }
 
   const maxProjects = TIER_PROJECT_LIMITS[tier];
+
+  // ── Free-access mode: no paywall, BYO key after the intro turns ───────────
+  // Trial + lapsed both land here. Intro turns (below the cap) still run on
+  // the platform key so spend stays bounded; past the cap the user continues
+  // free on their own key. Nothing is reset, so flipping free_mode off
+  // restores the previous paid behavior exactly.
+  if (freeMode && (tier === "trial" || tier === "lapsed")) {
+    const introLeft = tier === "trial" ? Math.max(0, trialTurnCap - trialTurnsUsed) : 0;
+    if (introLeft > 0) {
+      return {
+        tier,
+        maxProjects,
+        trialTurnsUsed,
+        trialTurnCap,
+        canStartTurn: true,
+        usePlatformKey: true,
+        statusLabel: `Free — ${introLeft} intro turn${introLeft === 1 ? "" : "s"} on us, then add your own OpenRouter key`,
+        freeMode,
+        hasOwnKey,
+        needsOwnKey: false,
+      };
+    }
+    return {
+      tier,
+      maxProjects,
+      trialTurnsUsed,
+      trialTurnCap,
+      canStartTurn: hasOwnKey,
+      usePlatformKey: false,
+      statusLabel: hasOwnKey
+        ? "Free access — running on your OpenRouter key"
+        : "Still free — add your own OpenRouter key in Profile to keep building",
+      freeMode,
+      hasOwnKey,
+      needsOwnKey: !hasOwnKey,
+    };
+  }
+
   const usePlatformKey = tier === "trial";
   // Trial: can start a turn only if under the cap. Lapsed: cannot start turns.
   // Starter/Pro: unlimited turns (BYO key).
@@ -104,7 +166,28 @@ export async function getTierState(userId: number): Promise<TierState> {
     statusLabel = tier === "starter" ? "Starter plan" : "Pro plan";
   }
 
-  return { tier, maxProjects, trialTurnsUsed, trialTurnCap, canStartTurn, usePlatformKey, statusLabel };
+  return {
+    tier,
+    maxProjects,
+    trialTurnsUsed,
+    trialTurnCap,
+    canStartTurn,
+    usePlatformKey,
+    statusLabel,
+    freeMode,
+    hasOwnKey,
+    needsOwnKey: !usePlatformKey && !hasOwnKey && canStartTurn,
+  };
+}
+
+/** Whether the user has their own OpenRouter key saved (encrypted at rest). */
+async function userHasOwnKey(userId: number): Promise<boolean> {
+  const rows = await db
+    .select({ id: userApiKeys.id })
+    .from(userApiKeys)
+    .where(eq(userApiKeys.userId, userId))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** Trial turn cap from system_settings (default 2) — tunable without a redeploy. */

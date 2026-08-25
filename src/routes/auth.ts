@@ -89,7 +89,6 @@ router.get("/verify", async (req, res) => {
 
     // Side effects for new users (non-blocking)
     notifyNewSignup(normalizedEmail).catch(console.error);
-    subscribeUser(normalizedEmail).catch(console.error);
   } else {
     const updated = await db
       .update(users)
@@ -98,6 +97,12 @@ router.get("/verify", async (req, res) => {
       .returning();
     user = updated[0]!;
   }
+
+  // Every user belongs on the GenWhisperer list. Run this on EVERY successful
+  // sign-in, not just first sign-up, so users who registered before this sync
+  // existed are backfilled on their next login. Idempotent (GetResponse 409 on
+  // an existing contact) and fire-and-forget — it never blocks sign-in.
+  subscribeUser(normalizedEmail).catch(console.error);
 
   const sessionToken = await signSession({ userId: user.id, email: user.email, role: user.role });
 

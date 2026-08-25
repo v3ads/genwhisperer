@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { Brand } from "./Brand";
+import { FreeAccessBanner } from "./FreeAccessBanner";
 import { useAuth } from "../lib/auth";
 
 /**
@@ -24,28 +25,31 @@ export function AppNav() {
   const isActive = (m: string) => loc.pathname === m || loc.pathname.startsWith(m + "/");
 
   return (
-    <nav className="app-nav">
-      <Brand large />
-      <div className="sp" />
-      <div className="links">
-        {links
-          .filter((l) => !l.adminOnly || user?.role === "admin")
-          .map((l) => (
-            <a key={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => nav(l.to)}>
-              {l.label}
-            </a>
-          ))}
-      </div>
-      {user && <span className="user-chip" title={user.email}>{user.email}</span>}
-      <button
-        className="logout"
-        onClick={async () => {
-          await logout();
-          nav("/sign-in");
-        }}
-      >
-        Sign out
-      </button>
-    </nav>
+    <>
+      <FreeAccessBanner />
+      <nav className="app-nav">
+        <Brand large />
+        <div className="sp" />
+        <div className="links">
+          {links
+            .filter((l) => !l.adminOnly || user?.role === "admin")
+            .map((l) => (
+              <a key={l.to} className={isActive(l.match) ? "active" : ""} onClick={() => nav(l.to)}>
+                {l.label}
+              </a>
+            ))}
+        </div>
+        {user && <span className="user-chip" title={user.email}>{user.email}</span>}
+        <button
+          className="logout"
+          onClick={async () => {
+            await logout();
+            nav("/sign-in");
+          }}
+        >
+          Sign out
+        </button>
+      </nav>
+    </>
   );
 }

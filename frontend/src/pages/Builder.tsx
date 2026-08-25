@@ -111,12 +111,22 @@ export default function Builder() {
       setModels(p.models);
       setModel(p.preferredModel || DEFAULT_MODEL);
       setProjects(pr.projects);
-      // Fetch subscription state for the trial-turn indicator + gating.
-      try { setSub(await billingApi.subscription()); } catch { /* non-fatal */ }
+      // Fetch subscription state for the access indicator + gating (one call).
+      let s: Awaited<ReturnType<typeof billingApi.subscription>> | null = null;
+      try {
+        s = await billingApi.subscription();
+        setSub(s);
+      } catch { /* non-fatal */ }
       if (pr.projects.length === 0) {
         setSetupMsg("Connect a Genesis project to start building.");
-      } else if (!p.hasOpenRouterKey && !(await billingApi.subscription()).usePlatformKey) {
-        setSetupMsg("Add your OpenRouter key in Profile to start building.");
+      } else if (!p.hasOpenRouterKey && s && !s.usePlatformKey) {
+        // In free mode this is the handover point: the intro turns on our key
+        // are used up, and the user continues free on their own key.
+        setSetupMsg(
+          s.freeMode
+            ? "You've used your free intro turns. GenWhisperer stays free — add your own OpenRouter key in Profile to keep building."
+            : "Add your OpenRouter key in Profile to start building."
+        );
       } else {
         setSetupMsg(null);
         // pick project from query param, else the first one
@@ -440,8 +450,25 @@ export default function Builder() {
             <span className="session-cost-label">Session</span>
             <span className="coin">$</span>{cost.toFixed(4)}
           </span>
-          {/* Trial-turn indicator / lapsed / upgrade prompt */}
-          {sub && sub.tier === "trial" && (
+          {/* Access indicator. Free mode: shows the remaining intro turns on
+              our key, then either "running on your key" or a prompt to add one
+              (pointing at Profile, not Billing — it's setup, not a paywall). */}
+          {sub && sub.freeMode && (sub.tier === "trial" || sub.tier === "lapsed") && (
+            sub.needsOwnKey ? (
+              <a className="trial-chip urgent" href="/profile" title="Still free — add your own OpenRouter key to keep building">
+                Free · Add your OpenRouter key
+              </a>
+            ) : sub.usePlatformKey ? (
+              <span className="trial-chip" title="Your first turns run on our key — after that, add your own and keep going free">
+                {`Free · ${sub.trialTurnCap - sub.trialTurnsUsed} intro turn${sub.trialTurnCap - sub.trialTurnsUsed === 1 ? "" : "s"} on us`}
+              </span>
+            ) : (
+              <span className="trial-chip" title="Free access — running on your own OpenRouter key">
+                Free · your OpenRouter key
+              </span>
+            )
+          )}
+          {sub && !sub.freeMode && sub.tier === "trial" && (
             <a
               className={`trial-chip ${sub.canStartTurn ? "" : "urgent"}`}
               href="/billing"
@@ -452,7 +479,7 @@ export default function Builder() {
                 : "Trial used up · Upgrade to keep building"}
             </a>
           )}
-          {sub && sub.tier === "lapsed" && (
+          {sub && !sub.freeMode && sub.tier === "lapsed" && (
             <a className="trial-chip urgent" href="/billing" title="Resubscribe to resume building">
               Lapsed · Resubscribe
             </a>
