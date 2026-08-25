@@ -91,11 +91,11 @@ export async function subscribeUser(email: string, name?: string): Promise<void>
       },
       { headers: getHeaders() }
     );
-    console.log(`[GetResponse] Subscribed: ${email}`);
+    console.log(`[GetResponse] Subscribed: ${safeForLog(email)}`);
   } catch (err: unknown) {
     // 409 = already subscribed — not an error.
     if (isAxiosStatus(err, 409)) {
-      console.log(`[GetResponse] Already subscribed: ${email}`);
+      console.log(`[GetResponse] Already subscribed: ${safeForLog(email)}`);
       return;
     }
     console.error("[GetResponse] Subscribe failed:", describeError(err));
@@ -105,6 +105,15 @@ export async function subscribeUser(email: string, name?: string): Promise<void>
 /** Reset the cached list id (tests / after changing GETRESPONSE_LIST_ID). */
 export function resetListCache(): void {
   cachedListId = undefined;
+}
+
+/**
+ * Strip CR/LF (and cap length) before putting a user-supplied value in a log
+ * line. Without this, an address containing newlines can forge log entries
+ * (Rafter: rafter.javascript.general.log-injection).
+ */
+function safeForLog(value: string): string {
+  return value.replace(/[\r\n\t]/g, " ").slice(0, 120);
 }
 
 function isAxiosStatus(err: unknown, status: number): boolean {
