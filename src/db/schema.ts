@@ -294,3 +294,38 @@ export const subscriptions = pgTable(
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type InsertSubscription = typeof subscriptions.$inferInsert;
+
+// ─── GitHub tokens (per-tenant, for the GitHub→Genesis import feature) ────────
+// Each user stores one GitHub personal access token (PAT) used to read their
+// repos during import. The token is AES-256-GCM encrypted at rest (same crypto
+// util as user_api_keys / genesis_projects) and only ever decrypted in server
+// memory by the github route — never sent to the browser. A masked display
+// value is returned to the UI. The import feature is Pro-only; the token itself
+// is stored regardless of tier, but the state-changing routes (connect/repos/
+// import) gate on tier === 'pro'.
+export const githubTokens = pgTable(
+  "github_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+    /**
+     * AES-256-GCM encrypted GitHub PAT: iv:authTag:ciphertext (hex).
+     * Decrypted only server-side. Never returned to the client in plaintext.
+     */
+    encryptedToken: text("encrypted_token").notNull(),
+    /** Masked display value, e.g. "ghp_****abcd". */
+    maskedToken: varchar("masked_token", { length: 48 }).notNull(),
+    /** Comma-separated GitHub scopes granted by the token, e.g. "repo,read:user". */
+    scopes: varchar("scopes", { length: 128 }),
+    /** GitHub login of the token owner (from /user), for display. */
+    login: varchar("login", { length: 80 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    userIdx: index("idx_github_tokens_user_id").on(t.userId),
+  })
+);
+
+export type GithubToken = typeof githubTokens.$inferSelect;
+export type InsertGithubToken = typeof githubTokens.$inferInsert;

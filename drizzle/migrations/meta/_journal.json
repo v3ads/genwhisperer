@@ -29,6 +29,13 @@
       "when": 1787256000000,
       "tag": "0005_tool_message_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787356000000,
+      "tag": "0006_github_tokens",
+      "breakpoints": true
     }
   ]
 }

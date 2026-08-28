@@ -338,3 +338,37 @@ export const billing = {
     }),
   portal: () => request<{ url: string }>("/billing/portal", { method: "POST" }),
 };
+
+// --- github (V2) — GitHub → Genesis import (Phase 1: connect/status/repos) ---
+
+export interface GithubStatus {
+  connected: boolean;
+  login?: string;
+  maskedToken?: string;
+  scopes?: string;
+  updatedAt?: string;
+}
+
+export interface GithubRepo {
+  id: number;
+  name: string;
+  fullName: string;
+  owner: string;
+  defaultBranch: string;
+  private: boolean;
+  description: string | null;
+  updatedAt: string | null;
+  sizeKb: number;
+  htmlUrl: string;
+}
+
+export const github = {
+  status: () => request<GithubStatus>("/github/status"),
+  connect: (token: string) =>
+    request<{ success: true; login: string; maskedToken: string; scopes: string }>(
+      "/github/connect",
+      { method: "POST", body: JSON.stringify({ token }) }
+    ),
+  disconnect: () => request<{ success: true }>("/github/connect", { method: "DELETE" }),
+  repos: () => request<{ repos: GithubRepo[] }>("/github/repos"),
+};
