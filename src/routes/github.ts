@@ -21,11 +21,22 @@
 
 import { Router, type Response } from "express";
 import { eq } from "drizzle-orm";
-import { db, githubTokens } from "../db/index.js";
+import { randomUUID } from "node:crypto";
+import { db, githubTokens, genesisProjects, userApiKeys } from "../db/index.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 import { encrypt, decrypt } from "../utils/crypto.js";
 import { getTierState, type Tier } from "../services/billing.js";
-import { validateToken, listRepos, type GithubRepo } from "../services/github.js";
+import {
+  validateToken,
+  listRepos,
+  getFileTree,
+  getBlob,
+  type GithubRepo,
+  type GithubTreeEntry,
+} from "../services/github.js";
+import { buildRepoDigest } from "../services/repoDigest.js";
+import { planImport, type ImportPlan, type ImportPlannerInput } from "../services/importPlanner.js";
+import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
 import { z } from "zod";
 
 const router: ReturnType<typeof Router> = Router();
@@ -217,6 +228,174 @@ router.get("/repos", requireAuth, async (req: AuthRequest, res) => {
       htmlUrl: r.htmlUrl,
     })),
   });
+});
+
+// ─── POST /api/github/import ──────────────────────────────────────────────────
+// Stage A of the GitHub → Genesis import. Pro-only SSE route:
+//   gate → load GitHub PAT + Genesis token + OpenRouter key → fetch file tree →
+//   build digest → run planner → emit the plan. NO Stage B execution yet.
+//
+// Emits SSE events (ImportEvent):
+//   status     — plain-language progress (continuous, never a static line)
+//   plan       — the structured ImportPlan once Stage A completes
+//   cost       — running OpenRouter cost estimate (when available)
+//   error      — plain-language error (fail-open: a planner error is surfaced
+//                as a plan with .error set, not a 500)
+//   done      — terminal
+//
+// Phase 3 deliberately stops at emitting the plan. Stage B (execute the plan
+// against Genesis) is Phase 4. This is the de-risk gate: validate translation
+// quality before touching Genesis.
+router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
+  const gate = await requirePro(req, res);
+  if (!gate) return;
+  const userId = gate.userId;
+
+  const schema = z.object({
+    genesisProjectId: z.number().int().positive(),
+    repoOwner: z.string().min(1).max(100),
+    repoName: z.string().min(1).max(100),
+    branch: z.string().min(1).max(100),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    return;
+  }
+  const { genesisProjectId, repoOwner, repoName, branch } = parsed.data;
+  const requestId = randomUUID();
+  res.setHeader("X-Import-Request-Id", requestId);
+
+  // ── Load the GitHub PAT (decrypt server-side) ──────────────────────────────
+  const ghRows = await db
+    .select()
+    .from(githubTokens)
+    .where(eq(githubTokens.userId, userId))
+    .limit(1);
+  if (!ghRows.length) {
+    res.status(400).json({ error: "Connect your GitHub account first." });
+    return;
+  }
+  let githubToken: string;
+  try {
+    githubToken = decrypt(ghRows[0].encryptedToken);
+  } catch {
+    res.status(500).json({ error: "Could not read your stored GitHub token. Reconnect it." });
+    return;
+  }
+
+  // ── Load the target Genesis project (ownership-checked) ────────────────────
+  const projRows = await db
+    .select()
+    .from(genesisProjects)
+    .where(eq(genesisProjects.id, genesisProjectId))
+    .limit(1);
+  if (!projRows.length || projRows[0].userId !== userId) {
+    res.status(404).json({ error: "Genesis project not found" });
+    return;
+  }
+
+  // ── Load the OpenRouter key (paid users have their own; pro-gated above) ──
+  const keyRows = await db
+    .select()
+    .from(userApiKeys)
+    .where(eq(userApiKeys.userId, userId))
+    .limit(1);
+  if (!keyRows.length) {
+    res.status(400).json({ error: "Add your OpenRouter key in Profile first." });
+    return;
+  }
+  const openrouterKey = decrypt(keyRows[0].encryptedKey);
+  const model = keyRows[0].preferredModel || DEFAULT_V2_MODEL;
+
+  // ── SSE headers (must not be compressed — see index.ts filter) ─────────────
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  res.write(": connected\n\n");
+  (res as Response & { flush?: () => void }).flush?.();
+
+  let closed = false;
+  const emit = (ev: Record<string, unknown>) => {
+    if (closed) return;
+    res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    (res as Response & { flush?: () => void }).flush?.();
+  };
+  const heartbeat = setInterval(() => {
+    if (!closed && !res.writableEnded) {
+      res.write(": keepalive\n\n");
+      (res as Response & { flush?: () => void }).flush?.();
+    }
+  }, 15_000);
+  res.on("close", () => {
+    closed = true;
+    clearInterval(heartbeat);
+  });
+
+  try {
+    // ── 1. Fetch the file tree ──────────────────────────────────────────────
+    emit({ type: "status", text: `Reading the file tree for ${repoOwner}/${repoName}…` });
+    let tree: GithubTreeEntry[];
+    try {
+      tree = await getFileTree(githubToken, repoOwner, repoName, branch);
+    } catch (e) {
+      emit({ type: "error", message: (e as Error).message });
+      return;
+    }
+
+    // ── 2. Build the digest (getBlob closure over the decrypted PAT) ────────
+    emit({ type: "status", text: "Building a compact digest of your repo…" });
+    const digest = await buildRepoDigest(
+      tree,
+      async (entry) => {
+        const blob = await getBlob(githubToken, repoOwner, repoName, entry.sha, entry.path);
+        return blob.content;
+      },
+      { owner: repoOwner, name: repoName, branch }
+    );
+
+    if (digest.manifest.capped) {
+      emit({
+        type: "status",
+        text: `Note: ${digest.manifest.cappedCount} file(s) were too large to include fully — the plan will note them.`,
+      });
+    }
+    if (digest.manifest.secretHits.length) {
+      emit({
+        type: "status",
+        text: `Security: ${digest.manifest.secretHits.length} file(s) contained likely secrets and were stripped — they will NOT be copied into Genesis.`,
+      });
+    }
+
+    // ── 3. Run the planner (Stage A) ───────────────────────────────────────
+    emit({ type: "status", text: "Asking the model to plan the translation… this can take a bit" });
+    const plannerInput: ImportPlannerInput = {
+      openrouterKey,
+      model,
+      digest,
+      requestId,
+      userId,
+    };
+    const plan: ImportPlan = await planImport(plannerInput);
+
+    if (plan.error) {
+      // Fail-open: the planner surfaced an error in the plan itself.
+      emit({ type: "plan", plan });
+      emit({ type: "error", message: plan.error });
+    } else {
+      emit({ type: "plan", plan });
+    }
+  } catch (e) {
+    emit({ type: "error", message: (e as Error).message });
+  } finally {
+    clearInterval(heartbeat);
+    if (!closed) {
+      emit({ type: "done" });
+      res.end();
+    }
+  }
 });
 
 export default router;

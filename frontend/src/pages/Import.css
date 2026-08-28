@@ -1,0 +1,56 @@
+/* Import page — GitHub → Genesis import (Phase 3).
+   Extends the shared app.css vocabulary (card / btn / fld / inp / banner). */
+
+.plan-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 18px;
+}
+.plan-list li {
+  font-size: 14px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.plan-list li:last-child {
+  border-bottom: none;
+}
+.plan-list code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  background: var(--navy-4);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--teal);
+}
+
+.plan-option {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.plan-option-label {
+  margin-bottom: 6px;
+}
+.plan-option .sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin: 2px 0;
+}
+
+.banner-info {
+  background: var(--cyan-soft);
+  border: 1px solid var(--cyan-line);
+  color: var(--text);
+}
+
+select.inp {
+  width: 100%;
+  appearance: none;
+  cursor: pointer;
+}
