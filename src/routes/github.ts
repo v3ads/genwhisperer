@@ -45,12 +45,19 @@ function maskGithubToken(token: string): string {
 }
 
 /** Pro-only gate shared by every state-changing route. Returns the tier on
- *  success; sends a 402 and returns null on failure. */
+ *  success; sends a 402 and returns null on failure. Also performs a defensive
+ *  auth re-check (requireAuth already guarantees req.user, but we re-verify
+ *  here so the downstream handlers never need a non-null assertion on it). */
 async function requirePro(
   req: AuthRequest,
   res: Response
-): Promise<{ tier: Tier } | null> {
-  const tierState = await getTierState(req.user!.id);
+): Promise<{ userId: number; tier: Tier } | null> {
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  const tierState = await getTierState(user.id);
   if (tierState.tier !== "pro") {
     res.status(402).json({
       error: "GitHub → Genesis import is a Pro feature. Upgrade to import a repo.",
@@ -59,13 +66,18 @@ async function requirePro(
     });
     return null;
   }
-  return { tier: tierState.tier };
+  return { userId: user.id, tier: tierState.tier };
 }
 
 // ─── GET /api/github/status ───────────────────────────────────────────────────
 // Whether a GitHub token is connected. Returns masked token + login only.
 router.get("/status", requireAuth, async (req: AuthRequest, res) => {
-  const userId = req.user!.id;
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const userId = user.id;
   const rows = await db
     .select()
     .from(githubTokens)
@@ -101,7 +113,7 @@ router.post("/connect", requireAuth, async (req: AuthRequest, res) => {
     return;
   }
 
-  const userId = req.user!.id;
+  const userId = gate.userId;
   const { token } = parsed.data;
 
   // Validate the token against GitHub before storing (mirrors the
@@ -153,7 +165,7 @@ router.delete("/connect", requireAuth, async (req: AuthRequest, res) => {
   const gate = await requirePro(req, res);
   if (!gate) return;
 
-  const userId = req.user!.id;
+  const userId = gate.userId;
   await db.delete(githubTokens).where(eq(githubTokens.userId, userId));
   res.json({ success: true });
 });
@@ -165,7 +177,7 @@ router.get("/repos", requireAuth, async (req: AuthRequest, res) => {
   const gate = await requirePro(req, res);
   if (!gate) return;
 
-  const userId = req.user!.id;
+  const userId = gate.userId;
   const rows = await db
     .select()
     .from(githubTokens)
