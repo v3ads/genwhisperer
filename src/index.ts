@@ -93,7 +93,15 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+// Parse URL-encoded request bodies with `extended: false` (Node's `querystring`,
+// flat key/value pairs only). The previous `extended: true` used the `qs` library,
+// which parses nested objects and is susceptible to prototype-pollution via crafted
+// params like `__proto__[isAdmin]=true` (flagged by Rafter). No route in this app
+// relies on nested body parsing — every handler reads a flat object via zod
+// `safeParse(req.body)` — so `extended: false` is a safe hardening with no behavior
+// change. If a future route needs nested form bodies, validate input to reject
+// `__proto__`/`constructor` keys rather than re-enabling `qs`.
+app.use(express.urlencoded({ extended: false }));
 
 // Apply gzip compression to everything EXCEPT the SSE agent endpoint.
 // The SSE route must not be compressed — compression buffers chunks which
