@@ -113,6 +113,16 @@ export default function Projects() {
             <a className="link-inline" href="/guide/genesis-project" target="_blank" rel="noopener noreferrer">How do I connect one?</a>
           </p>
 
+          {!loading && list.length === 0 && (
+            <p className="sub" style={{ marginBottom: 16 }}>
+              No projects yet.{" "}
+              <a className="link-inline" href="https://genesis.estage.com" target="_blank" rel="noopener noreferrer">
+                Create a new blank project in Genesis
+              </a>
+              , then connect it here.
+            </p>
+          )}
+
           {!showAdd ? (
             <button className="btn btn-primary" onClick={() => { setShowAdd(true); setErr(null); setLimitTier(null); setShowUpgrade(false); }} style={{ width: "auto" }}>
               + Add project

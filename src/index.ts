@@ -15,6 +15,7 @@ import projectsRouter from "./routes/projects.js";
 import agentRouter from "./routes/agent.js";
 import adminRouter from "./routes/admin.js";
 import billingRouter from "./routes/billing.js";
+import githubRouter from "./routes/github.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 import { runMigrations } from "./db/runMigrations.js";
@@ -100,7 +101,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   compression({
     filter: (req, res) => {
-      if (req.path === "/api/agent/message") return false;
+      // SSE routes must not be compressed — compression buffers chunks which
+      // breaks the event stream. The agent /message endpoint and the (future)
+      // github /import endpoint both stream.
+      if (req.path === "/api/agent/message" || req.path === "/api/github/import") {
+        return false;
+      }
       return compression.filter(req, res);
     },
   })
@@ -141,6 +147,7 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/agent", chatLimiter, agentRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/billing", billingRouter);
+app.use("/api/github", githubRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {

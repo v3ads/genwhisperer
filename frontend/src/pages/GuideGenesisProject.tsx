@@ -31,6 +31,17 @@ export default function GuideGenesisProject() {
           connect as many projects as you like, one at a time. Here's how.
         </p>
 
+        <div className="guide-callout">
+          <div className="ic">◆</div>
+          <p>
+            <b>First, create a new blank project in Genesis.</b> If you don't already have a
+            project you want to connect (or you're starting a fresh import), open{" "}
+            <a className="link-inline" href="https://genesis.estage.com" target="_blank" rel="noopener noreferrer">genesis.estage.com</a>{" "}
+            and create a new <b>blank</b> project — don't build anything in it yet. Then come
+            back here to connect it.
+          </p>
+        </div>
+
         <div className="guide-steps">
           <div className="guide-step">
             <div className="n">1</div>
