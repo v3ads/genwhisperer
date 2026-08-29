@@ -178,7 +178,12 @@ export default function Import() {
       <AppNav />
       <main className="app-main">
         {err && <div className="banner banner-err">{err}</div>}
-        {status && step === "running" && <div className="banner banner-info">{status}</div>}
+        {status && step === "running" && (
+          <div className="banner banner-info">
+            {status}{" "}
+            <button className="link-inline link-btn" onClick={cancel}>Cancel</button>
+          </div>
+        )}
 
         <div className="card">
           <h2>Import a GitHub repo to Genesis</h2>
