@@ -40,6 +40,8 @@ import {
   runImport,
   resolveImportGate,
   type ImportRunnerInput,
+  type ImportSink,
+  type ImportEvent,
 } from "../services/importRunner.js";
 import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
@@ -493,7 +495,9 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     return;
   }
   // Read repo owner/name/branch off the plan (the planner carried them).
-  const plan = planRaw as ImportPlan;
+  // Cast through `unknown` — planRaw is z.record(z.unknown()) which TS
+  // won't directly coerce to ImportPlan (TS2352).
+  const plan = planRaw as unknown as ImportPlan;
   const { owner, name, branch } = plan.repo;
 
   // SSE headers.
@@ -506,7 +510,7 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
   (res as Response & { flush?: () => void }).flush?.();
 
   let closed = false;
-  const emit = (ev: Record<string, unknown>) => {
+  const emit = (ev: ImportEvent) => {
     if (closed) return;
     res.write(`data: ${JSON.stringify(ev)}\n\n`);
     (res as Response & { flush?: () => void }).flush?.();
@@ -522,7 +526,7 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     clearInterval(heartbeat);
   });
 
-  const sink = { emit: (ev) => emit(ev), closed: () => closed };
+  const sink: ImportSink = { emit: (ev) => emit(ev), closed: () => closed };
 
   // Connect the Genesis MCP client (one per run; initialize is idempotent).
   const mcp = new GenesisMcpClient(project.mcpUrl, genesisToken);
