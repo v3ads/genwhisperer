@@ -48,6 +48,9 @@ export interface PlanFile {
   genesisPath: string;
   /** Source repo path it's translated from, for traceability. */
   fromRepoPath: string;
+  /** Git blob SHA of the source file — used by Stage B to re-fetch content
+   *  via the GitHub git/blobs/{sha} API (host-constant URL; avoids SSRF). */
+  sha: string;
   /** Whether this file's content is generated/translated (true) or copied as-is. */
   translated: boolean;
   /** A short note on what this file is (for the review UI). */
@@ -70,6 +73,10 @@ export interface PlanDataCatalog {
   genesisPath: string;
   /** Source repo path or description it's derived from. */
   fromRepoPath: string;
+  /** Git blob SHA of the source file (when derived from a repo file) — used by
+   *  Stage B to re-fetch content via git/blobs/{sha} (host-constant URL; avoids SSRF).
+   *  Empty string when the catalog is not derived from a single repo file. */
+  sha: string;
   /** Short note for the review UI. */
   note: string;
 }
@@ -142,9 +149,9 @@ Return ONLY a JSON object matching this shape (no prose, no markdown fences):
 {
   "summary": "one line: what kind of site this is",
   "routes": [{ "source": "/", "genesisPage": "/", "isHome": true }],
-  "files": [{ "genesisPath": "src/pages/Home.tsx", "fromRepoPath": "src/pages/Index.tsx", "translated": true, "note": "..." }],
+  "files": [{ "genesisPath": "src/pages/Home.tsx", "fromRepoPath": "src/pages/Index.tsx", "sha": "<git blob sha>", "translated": true, "note": "..." }],
   "assets": [{ "repoPath": "public/logo.png", "genesisMediaName": "logo.png", "rewriteIn": ["src/pages/Home.tsx"] }],
-  "dataCatalogs": [{ "genesisPath": "src/data/products.json", "fromRepoPath": "supabase/products", "note": "..." }],
+  "dataCatalogs": [{ "genesisPath": "src/data/products.json", "fromRepoPath": "supabase/products", "sha": "<git blob sha or empty>", "note": "..." }],
   "backend": { "detected": false, "summary": "", "options": [] },
   "outOfScope": [{ "description": "...", "reason": "..." }],
   "userNote": "plain-language note shown to the user before they confirm"
@@ -266,6 +273,24 @@ Produce the translation plan JSON now.`;
 
   // Coerce into the plan shape, filling defaults for missing fields.
   const plan = coercePlan(parsed, digest);
+
+  // Enrich SHAs from the digest: the planner's JSON output may carry the
+  // blob SHA, but if the model omitted it, fill it from the digest's
+  // file map (keyed by fromRepoPath). Stage B re-fetches content via the
+  // GitHub git/blobs/{sha} API, so every plan file MUST carry a SHA.
+  const shaByPath = new Map<string, string>();
+  for (const df of digest.files) shaByPath.set(df.path, df.sha);
+  for (const f of plan.files) {
+    if (!f.sha && f.fromRepoPath && shaByPath.has(f.fromRepoPath)) {
+      f.sha = shaByPath.get(f.fromRepoPath)!;
+    }
+  }
+  for (const d of plan.dataCatalogs) {
+    if (!d.sha && d.fromRepoPath && shaByPath.has(d.fromRepoPath)) {
+      d.sha = shaByPath.get(d.fromRepoPath)!;
+    }
+  }
+
   if (estimatedCostUsd !== undefined) plan.estimatedCostUsd = estimatedCostUsd;
   return plan;
 }
@@ -340,6 +365,7 @@ export function coercePlan(parsed: unknown, digest: RepoDigest): ImportPlan {
       return {
         genesisPath: str(o.genesisPath),
         fromRepoPath: str(o.fromRepoPath),
+        sha: str(o.sha),
         translated: bool(o.translated),
         note: str(o.note),
       };
@@ -357,6 +383,7 @@ export function coercePlan(parsed: unknown, digest: RepoDigest): ImportPlan {
       return {
         genesisPath: str(o.genesisPath),
         fromRepoPath: str(o.fromRepoPath),
+        sha: str(o.sha),
         note: str(o.note),
       };
     }),

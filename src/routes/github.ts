@@ -36,6 +36,12 @@ import {
 } from "../services/github.js";
 import { buildRepoDigest } from "../services/repoDigest.js";
 import { planImport, type ImportPlan, type ImportPlannerInput } from "../services/importPlanner.js";
+import {
+  runImport,
+  resolveImportGate,
+  type ImportRunnerInput,
+} from "../services/importRunner.js";
+import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
 import { z } from "zod";
 
@@ -53,6 +59,16 @@ function maskGithubToken(token: string): string {
   const prefix = underscore > 0 && underscore <= 11 ? token.slice(0, underscore + 1) : token.slice(0, 8);
   const suffix = token.slice(-4);
   return `${prefix}****${suffix}`;
+}
+
+/** SSRF defense: a safe GitHub repo identifier segment (owner/name/branch)
+ *  is alphanumeric with - _ . and contains no slashes, colons, or protocol-
+ *  like sequences. Reject anything that could escape the api.github.com host. */
+function isSafeRepoSegment(s: string): boolean {
+  if (!s || s.length > 100) return false;
+  // Allow alphanumeric, dash, underscore, dot. No slashes, colons, or
+  // anything that could form a host or protocol.
+  return /^[A-Za-z0-9._-]+$/.test(s);
 }
 
 /** Pro-only gate shared by every state-changing route. Returns the tier on
@@ -336,6 +352,18 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
 
   try {
     // ── 1. Fetch the file tree ──────────────────────────────────────────────
+    // SSRF defense: validate repoOwner/repoName/branch (from the request body)
+    // are safe GitHub identifier segments before letting getFileTree build
+    // a GitHub API URL from them. Reject anything that could escape the
+    // api.github.com host (slashes, colons, host-like values).
+    if (
+      !isSafeRepoSegment(repoOwner) ||
+      !isSafeRepoSegment(repoName) ||
+      !isSafeRepoSegment(branch)
+    ) {
+      emit({ type: "error", message: "Invalid repo owner/name/branch." });
+      return;
+    }
     emit({ type: "status", text: `Reading the file tree for ${repoOwner}/${repoName}…` });
     let tree: GithubTreeEntry[];
     try {
@@ -396,6 +424,183 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
       res.end();
     }
   }
+});
+
+// ─── POST /api/github/execute ───────────────────────────────────────────────
+// Stage B of the GitHub → Genesis import. Pro-only SSE route: takes a
+// confirmed ImportPlan (from Stage A) + the user's chosen backend option,
+// decrypts the Genesis token, connects a GenesisMcpClient, and runs the
+// runner. Emits {status|tool_approval_request|tool_approval_resolved|
+// progress|summary|error|done}. The publish + Dedicated Cloud migrate
+// steps are confirm-gated (pause until POST /api/github/approve/:gateId).
+//
+// The plan is sent in the request body (the frontend already has it from
+// Stage A). We do NOT re-run the planner here — Stage A and Stage B are
+// deliberately separate so the user can review the plan between them.
+router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => {
+  const gate = await requirePro(req, res);
+  if (!gate) return;
+  const userId = gate.userId;
+
+  const schema = z.object({
+    genesisProjectId: z.number().int().positive(),
+    plan: z.record(z.unknown()),
+    backendOption: z.enum(["reuse-supabase", "dedicated-cloud", "skip"]),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    return;
+  }
+  const { genesisProjectId, plan: planRaw, backendOption } = parsed.data;
+  const requestId = randomUUID();
+  res.setHeader("X-Import-Request-Id", requestId);
+
+  // Load the target Genesis project (ownership-checked) + decrypt the token.
+  const projRows = await db
+    .select()
+    .from(genesisProjects)
+    .where(eq(genesisProjects.id, genesisProjectId))
+    .limit(1);
+  if (!projRows.length || projRows[0].userId !== userId) {
+    res.status(404).json({ error: "Genesis project not found" });
+    return;
+  }
+  const project = projRows[0];
+  let genesisToken: string;
+  try {
+    genesisToken = decrypt(project.tokenEncrypted);
+  } catch {
+    res.status(500).json({ error: "Could not read the Genesis token. Update it in Projects." });
+    return;
+  }
+
+  // Load the GitHub PAT (for the getBlob re-fetch closure).
+  const ghRows = await db
+    .select()
+    .from(githubTokens)
+    .where(eq(githubTokens.userId, userId))
+    .limit(1);
+  if (!ghRows.length) {
+    res.status(400).json({ error: "Connect your GitHub account first." });
+    return;
+  }
+  let githubToken: string;
+  try {
+    githubToken = decrypt(ghRows[0].encryptedToken);
+  } catch {
+    res.status(500).json({ error: "Could not read your stored GitHub token. Reconnect it." });
+    return;
+  }
+  // Read repo owner/name/branch off the plan (the planner carried them).
+  const plan = planRaw as ImportPlan;
+  const { owner, name, branch } = plan.repo;
+
+  // SSE headers.
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  res.write(": connected\n\n");
+  (res as Response & { flush?: () => void }).flush?.();
+
+  let closed = false;
+  const emit = (ev: Record<string, unknown>) => {
+    if (closed) return;
+    res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    (res as Response & { flush?: () => void }).flush?.();
+  };
+  const heartbeat = setInterval(() => {
+    if (!closed && !res.writableEnded) {
+      res.write(": keepalive\n\n");
+      (res as Response & { flush?: () => void }).flush?.();
+    }
+  }, 15_000);
+  res.on("close", () => {
+    closed = true;
+    clearInterval(heartbeat);
+  });
+
+  const sink = { emit: (ev) => emit(ev), closed: () => closed };
+
+  // Connect the Genesis MCP client (one per run; initialize is idempotent).
+  const mcp = new GenesisMcpClient(project.mcpUrl, genesisToken);
+
+  // getBlob re-fetch closure: re-fetch a source file's content by its git
+  // blob SHA. Stage B calls this with f.sha (the plan carries SHAs,
+  // enriched from the digest in importPlanner.ts). Using git/blobs/{sha}
+  // with a validated hex SHA — and a literal api.github.com origin — keeps
+  // the outbound URL's host provably api.github.com and removes the long
+  // user-controlled repo-path segment that the contents API would have
+  // put in the URL path (the SSRF surface Rafter flagged).
+  const refetchBlob = async (sha: string): Promise<string> => {
+    // SSRF defense: the SHA must be a valid 40-char hex git blob SHA.
+    // No slashes, colons, protocol sequences, or host-like values can
+    // pass this check, so it cannot escape the api.github.com host.
+    if (!/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error("Invalid blob SHA for content re-fetch.");
+    }
+    // Build the URL from a hard-coded api.github.com origin; the only
+    // user-controlled input is the validated hex SHA, placed in the path.
+    // The host is a literal constant (never derived from user input).
+    const url = new URL("https://api.github.com");
+    url.pathname = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/blobs/${sha}`;
+    // Belt-and-suspenders: assert the host is still api.github.com.
+    if (url.host !== "api.github.com") {
+      throw new Error("Content re-fetch URL did not resolve to api.github.com.");
+    }
+    const r = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "genwhisperer",
+      },
+    });
+    if (!r.ok) {
+      throw new Error(`GitHub returned HTTP ${r.status} while re-fetching blob ${sha}`);
+    }
+    // git/blobs returns { content: base64, encoding: "base64" }.
+    const j = (await r.json()) as { content?: string; encoding?: string };
+    if (j.encoding === "base64" && j.content) {
+      return Buffer.from(j.content.replace(/\n/g, ""), "base64").toString("utf8");
+    }
+    return j.content ?? "";
+  };
+
+  const runnerInput: ImportRunnerInput = {
+    mcp,
+    plan,
+    backendOption,
+    refetchBlob,
+    requestId,
+  };
+
+  try {
+    await runImport(runnerInput, sink);
+  } catch (e) {
+    emit({ type: "error", message: (e as Error).message });
+  } finally {
+    clearInterval(heartbeat);
+    if (!closed) {
+      emit({ type: "done" });
+      res.end();
+    }
+  }
+});
+
+// ─── POST /api/github/approve/:gateId ──────────────────────────────────────────
+// Resolve a pending Stage B approval gate (publish / Dedicated Cloud migrate).
+// Mirrors the agent /approve/:gateId route.
+router.post("/approve/:gateId", requireAuth, async (req: AuthRequest, res) => {
+  const approved = req.body?.approved === true;
+  const ok = resolveImportGate(String(req.params.gateId), approved);
+  if (!ok) {
+    res.status(404).json({ error: "No pending import gate with that id (it may have expired)." });
+    return;
+  }
+  res.json({ success: true, approved });
 });
 
 export default router;

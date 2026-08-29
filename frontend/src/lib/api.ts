@@ -371,4 +371,10 @@ export const github = {
     ),
   disconnect: () => request<{ success: true }>("/github/connect", { method: "DELETE" }),
   repos: () => request<{ repos: GithubRepo[] }>("/github/repos"),
+  // Resolve a pending Stage B approval gate (publish / Dedicated Cloud migrate).
+  approveGate: (gateId: string, approved: boolean) =>
+    request<{ success: true; approved: boolean }>(`/github/approve/${gateId}`, {
+      method: "POST",
+      body: JSON.stringify({ approved }),
+    }),
 };
