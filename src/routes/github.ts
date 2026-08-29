@@ -61,6 +61,27 @@ function maskGithubToken(token: string): string {
   return `${prefix}****${suffix}`;
 }
 
+/** SSRF defense: a safe GitHub repo identifier segment (owner/name/branch)
+ *  is alphanumeric with - _ . and contains no slashes, colons, or protocol-
+ *  like sequences. Reject anything that could escape the api.github.com host. */
+function isSafeRepoSegment(s: string): boolean {
+  if (!s || s.length > 100) return false;
+  // Allow alphanumeric, dash, underscore, dot. No slashes, colons, or
+  // anything that could form a host or protocol.
+  return /^[A-Za-z0-9._-]+$/.test(s);
+}
+
+/** SSRF defense: a repo PATH may contain slashes (it's a path) but must
+ *  not contain protocol/host escapes, parent traversal, or encoded host
+ *  separators. Allow alphanumerics, slash, dash, underscore, dot, hyphen. */
+function isSafeRepoPath(p: string): boolean {
+  if (!p || p.length > 1000) return false;
+  // No colons (protocol), no ".." (traversal), no "%2F"-style host escapes
+  // that could re-target the request. Slashes are fine (it's a path).
+  if (p.includes("..") || p.includes(":")) return false;
+  return /^[A-Za-z0-9._/\-]+$/.test(p);
+}
+
 /** Pro-only gate shared by every state-changing route. Returns the tier on
  *  success; sends a 402 and returns null on failure. Also performs a defensive
  *  auth re-check (requireAuth already guarantees req.user, but we re-verify
@@ -509,23 +530,41 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
   // The runner uses this to get the content for genesis_write_file calls
   // (the plan carries paths, not content).
   const refetchBlob = async (repoPath: string): Promise<string> => {
+    // SSRF defense: owner/name/branch come from the plan (ultimately the
+    // user's request body), so validate they are safe GitHub identifier
+    // segments before building the URL. Reject anything that could
+    // escape the api.github.com host (slashes, colons, host-like values).
+    // repoPath may contain slashes (it's a path) but must not contain
+    // protocol/host escapes.
+    if (!isSafeRepoSegment(owner) || !isSafeRepoSegment(name) || !isSafeRepoSegment(branch)) {
+      throw new Error("Invalid repo owner/name/branch for content re-fetch.");
+    }
+    if (!isSafeRepoPath(repoPath)) {
+      throw new Error("Invalid repo path for content re-fetch.");
+    }
     // Resolve repoPath → tree entry SHA. We don't have the tree here, so
     // use the GitHub contents API directly (works for files ≤1MB; larger
     // files need the blobs API, but the planner already capped content at
     // 256KB so this path covers the inlined set).
-    const r = await fetch(
+    const url = new URL(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeURIComponent(
         repoPath
-      )}?ref=${encodeURIComponent(branch)}`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${githubToken}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "genwhisperer",
-        },
-      }
+      )}?ref=${encodeURIComponent(branch)}`
     );
+    // Belt-and-suspenders: the URL host MUST be api.github.com. encodeURIComponent
+    // on the segments prevents `://` injection, but assert the host too so
+    // a future refactor can't accidentally widen the SSRF surface.
+    if (url.host !== "api.github.com") {
+      throw new Error("Content re-fetch URL did not resolve to api.github.com.");
+    }
+    const r = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${githubToken}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "genwhisperer",
+      },
+    });
     if (!r.ok) {
       throw new Error(`GitHub returned HTTP ${r.status} while re-fetching ${repoPath}`);
     }
