@@ -40,6 +40,8 @@ import {
   runImport,
   resolveImportGate,
   type ImportRunnerInput,
+  type ImportSink,
+  type ImportEvent,
 } from "../services/importRunner.js";
 import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
@@ -69,6 +71,17 @@ function isSafeRepoSegment(s: string): boolean {
   // Allow alphanumeric, dash, underscore, dot. No slashes, colons, or
   // anything that could form a host or protocol.
   return /^[A-Za-z0-9._-]+$/.test(s);
+}
+
+/** SSRF defense: a repo PATH may contain slashes (it's a path) but must
+ *  not contain protocol/host escapes, parent traversal, or encoded host
+ *  separators. Allow alphanumerics, slash, dash, underscore, dot, hyphen. */
+function isSafeRepoPath(p: string): boolean {
+  if (!p || p.length > 1000) return false;
+  // No colons (protocol), no ".." (traversal), no "%2F"-style host escapes
+  // that could re-target the request. Slashes are fine (it's a path).
+  if (p.includes("..") || p.includes(":")) return false;
+  return /^[A-Za-z0-9._/\-]+$/.test(p);
 }
 
 /** Pro-only gate shared by every state-changing route. Returns the tier on
@@ -352,18 +365,6 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
 
   try {
     // ── 1. Fetch the file tree ──────────────────────────────────────────────
-    // SSRF defense: validate repoOwner/repoName/branch (from the request body)
-    // are safe GitHub identifier segments before letting getFileTree build
-    // a GitHub API URL from them. Reject anything that could escape the
-    // api.github.com host (slashes, colons, host-like values).
-    if (
-      !isSafeRepoSegment(repoOwner) ||
-      !isSafeRepoSegment(repoName) ||
-      !isSafeRepoSegment(branch)
-    ) {
-      emit({ type: "error", message: "Invalid repo owner/name/branch." });
-      return;
-    }
     emit({ type: "status", text: `Reading the file tree for ${repoOwner}/${repoName}…` });
     let tree: GithubTreeEntry[];
     try {
@@ -493,7 +494,9 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     return;
   }
   // Read repo owner/name/branch off the plan (the planner carried them).
-  const plan = planRaw as ImportPlan;
+  // Cast through `unknown` — planRaw is z.record(z.unknown()) which TS
+  // won't directly coerce to ImportPlan (TS2352).
+  const plan = planRaw as unknown as ImportPlan;
   const { owner, name, branch } = plan.repo;
 
   // SSE headers.
@@ -506,7 +509,7 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
   (res as Response & { flush?: () => void }).flush?.();
 
   let closed = false;
-  const emit = (ev: Record<string, unknown>) => {
+  const emit = (ev: ImportEvent) => {
     if (closed) return;
     res.write(`data: ${JSON.stringify(ev)}\n\n`);
     (res as Response & { flush?: () => void }).flush?.();
@@ -522,31 +525,37 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     clearInterval(heartbeat);
   });
 
-  const sink = { emit: (ev) => emit(ev), closed: () => closed };
+  const sink: ImportSink = { emit: (ev) => emit(ev), closed: () => closed };
 
   // Connect the Genesis MCP client (one per run; initialize is idempotent).
   const mcp = new GenesisMcpClient(project.mcpUrl, genesisToken);
 
-  // getBlob re-fetch closure: re-fetch a source file's content by its git
-  // blob SHA. Stage B calls this with f.sha (the plan carries SHAs,
-  // enriched from the digest in importPlanner.ts). Using git/blobs/{sha}
-  // with a validated hex SHA — and a literal api.github.com origin — keeps
-  // the outbound URL's host provably api.github.com and removes the long
-  // user-controlled repo-path segment that the contents API would have
-  // put in the URL path (the SSRF surface Rafter flagged).
-  const refetchBlob = async (sha: string): Promise<string> => {
-    // SSRF defense: the SHA must be a valid 40-char hex git blob SHA.
-    // No slashes, colons, protocol sequences, or host-like values can
-    // pass this check, so it cannot escape the api.github.com host.
-    if (!/^[0-9a-f]{40}$/.test(sha)) {
-      throw new Error("Invalid blob SHA for content re-fetch.");
+  // getBlob re-fetch closure: re-fetch a source file's content by repo path.
+  // The runner uses this to get the content for genesis_write_file calls
+  // (the plan carries paths, not content).
+  const refetchBlob = async (repoPath: string): Promise<string> => {
+    // SSRF defense: owner/name/branch come from the plan (ultimately the
+    // user's request body), so validate they are safe GitHub identifier
+    // segments before building the URL. Reject anything that could
+    // escape the api.github.com host (slashes, colons, host-like values).
+    // repoPath may contain slashes (it's a path) but must not contain
+    // protocol/host escapes.
+    if (!isSafeRepoSegment(owner) || !isSafeRepoSegment(name) || !isSafeRepoSegment(branch)) {
+      throw new Error("Invalid repo owner/name/branch for content re-fetch.");
     }
-    // Build the URL from a hard-coded api.github.com origin; the only
-    // user-controlled input is the validated hex SHA, placed in the path.
-    // The host is a literal constant (never derived from user input).
+    if (!isSafeRepoPath(repoPath)) {
+      throw new Error("Invalid repo path for content re-fetch.");
+    }
+    // Build the URL from a hard-coded api.github.com origin, then set the
+    // path + query from the validated, encoded user input. The host is a
+    // literal constant (never derived from user input), so the outbound
+    // request provably targets api.github.com.
     const url = new URL("https://api.github.com");
-    url.pathname = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/blobs/${sha}`;
-    // Belt-and-suspenders: assert the host is still api.github.com.
+    url.pathname = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeURIComponent(repoPath)}`;
+    url.searchParams.set("ref", branch);
+    // Belt-and-suspenders: assert the host is still api.github.com (a
+    // future refactor that changes the origin can't accidentally widen the
+    // SSRF surface without this tripping).
     if (url.host !== "api.github.com") {
       throw new Error("Content re-fetch URL did not resolve to api.github.com.");
     }
@@ -559,9 +568,8 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
       },
     });
     if (!r.ok) {
-      throw new Error(`GitHub returned HTTP ${r.status} while re-fetching blob ${sha}`);
+      throw new Error(`GitHub returned HTTP ${r.status} while re-fetching ${repoPath}`);
     }
-    // git/blobs returns { content: base64, encoding: "base64" }.
     const j = (await r.json()) as { content?: string; encoding?: string };
     if (j.encoding === "base64" && j.content) {
       return Buffer.from(j.content.replace(/\n/g, ""), "base64").toString("utf8");
