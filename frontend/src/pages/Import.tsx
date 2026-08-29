@@ -19,9 +19,9 @@ interface ImportPlan {
   repo: { owner: string; name: string; branch: string };
   summary: string;
   routes: Array<{ source: string; genesisPage: string; isHome: boolean }>;
-  files: Array<{ genesisPath: string; fromRepoPath: string; translated: boolean; note: string }>;
+  files: Array<{ genesisPath: string; fromRepoPath: string; sha: string; translated: boolean; note: string }>;
   assets: Array<{ repoPath: string; genesisMediaName: string; rewriteIn: string[] }>;
-  dataCatalogs: Array<{ genesisPath: string; fromRepoPath: string; note: string }>;
+  dataCatalogs: Array<{ genesisPath: string; fromRepoPath: string; sha: string; note: string }>;
   backend: {
     detected: boolean;
     summary: string;

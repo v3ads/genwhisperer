@@ -89,11 +89,12 @@ export function cancelImportGatesFor(gateIds: string[]): void {
 
 // ─── Input ───────────────────────────────────────────────────────────────────
 
-/** Injected blob fetcher: re-fetch a source file's text content by repo path.
- *  The plan carries paths, not content (content was stripped/capped in the
- *  digest). The runner re-fetches what it needs to write. Returns "" if the
- *  blob can't be decoded (binary/capped) — the caller logs it. */
-export type BlobRefetcher = (repoPath: string) => Promise<string>;
+/** Injected blob fetcher: re-fetch a source file's text content by its
+ *  git blob SHA. The plan carries SHAs (enriched from the digest in
+ *  importPlanner.ts); the runner re-fetches by SHA via the GitHub
+ *  git/blobs/{sha} API (host-constant URL — avoids SSRF). Returns "" if
+ *  the blob can't be decoded. */
+export type BlobRefetcher = (sha: string) => Promise<string>;
 
 export interface ImportRunnerInput {
   /** Connected Genesis MCP client (one per run). */
@@ -223,11 +224,19 @@ export async function runImport(
       safeEmit({ type: "progress", done, total, label });
       safeEmit({ type: "status", text: `Writing ${f.genesisPath}…` });
 
-      // Re-fetch the source content. Binary/capped files come back as "" —
-      // surface a skip rather than write an empty file.
+      // Re-fetch the source content by the file's git blob SHA (the plan
+      // carries SHAs, enriched from the digest in importPlanner.ts). Using
+      // the SHA — not the repo path — keeps the GitHub re-fetch URL's host
+      // provably api.github.com (git/blobs/{sha} with a validated hex SHA).
+      // Binary/capped files have no SHA/come back as "" — surface a skip
+      // rather than write an empty file.
       let content = "";
       try {
-        content = await refetchBlob(f.fromRepoPath);
+        if (!f.sha) {
+          skipped.push(`${label} (no blob SHA — binary/capped/secret-stripped)`);
+          continue;
+        }
+        content = await refetchBlob(f.sha);
       } catch (e) {
         failed.push({ label, error: `Could not fetch source: ${(e as Error).message}` });
         continue;
@@ -290,10 +299,12 @@ export async function runImport(
       }
       try {
         const which = toolNames.has("genesis_data_file_write") ? "genesis_data_file_write" : "data_file_write";
-        // Re-fetch the source data content if the catalog is derived from a repo file.
+        // Re-fetch the source data content by blob SHA if the catalog
+        // is derived from a repo file with a SHA. Catalogs without a SHA
+        // (synthetic/generated) get empty content.
         let content = "";
         try {
-          content = d.fromRepoPath ? await refetchBlob(d.fromRepoPath) : "";
+          content = d.sha ? await refetchBlob(d.sha) : "";
         } catch {
           content = "";
         }
