@@ -54,3 +54,63 @@ select.inp {
   appearance: none;
   cursor: pointer;
 }
+
+/* Backend option picker (step 4) */
+.backend-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.backend-option {
+  display: block;
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.backend-option.selected {
+  border-color: var(--cyan-line);
+  background: var(--cyan-soft);
+}
+.backend-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.backend-option .plan-option-label {
+  margin-bottom: 6px;
+}
+
+/* Progress bar (step 5) */
+.progress-wrap {
+  margin: 14px 0;
+}
+.progress-bar {
+  background: var(--navy-4);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.progress-fill {
+  background: var(--grad);
+  height: 100%;
+  border-radius: 999px;
+  transition: width .3s ease;
+}
+.progress-wrap .sub {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Warning banner (approval gate) */
+.banner-warn {
+  background: #f5b4541a;
+  border: 1px solid #f5b45455;
+  color: var(--text);
+}

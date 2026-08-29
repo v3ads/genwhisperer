@@ -10,10 +10,15 @@
  * events will be added in Phase 4.
  */
 
-/** The server-side import event shape (mirrors routes/github.ts). */
+/** The server-side import event shape (mirrors routes/github.ts).
+ *  Phase 4 adds: tool_approval_request/resolved, progress, summary. */
 export type ImportEvent =
   | { type: "status"; text: string }
   | { type: "plan"; plan: unknown }
+  | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
+  | { type: "tool_approval_resolved"; gateId: string; approved: boolean }
+  | { type: "progress"; done: number; total: number; label: string }
+  | { type: "summary"; succeeded: string[]; skipped: string[]; failed: Array<{ label: string; error: string }> }
   | { type: "cost"; totalUsd: number }
   | { type: "error"; message: string }
   | { type: "done" };
@@ -22,6 +27,10 @@ export type ImportEvent =
 export interface ImportStreamHandlers {
   onStatus?: (text: string) => void;
   onPlan?: (plan: unknown) => void;
+  onToolApprovalRequest?: (gateId: string, tool: string, args: Record<string, unknown>) => void;
+  onToolApprovalResolved?: (gateId: string, approved: boolean) => void;
+  onProgress?: (done: number, total: number, label: string) => void;
+  onSummary?: (succeeded: string[], skipped: string[], failed: Array<{ label: string; error: string }>) => void;
   onCost?: (totalUsd: number) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
@@ -143,8 +152,68 @@ function dispatch(ev: ImportEvent, h: ImportStreamHandlers): void {
   switch (ev.type) {
     case "status": h.onStatus?.(ev.text); break;
     case "plan": h.onPlan?.(ev.plan); break;
+    case "tool_approval_request": h.onToolApprovalRequest?.(ev.gateId, ev.tool, ev.args); break;
+    case "tool_approval_resolved": h.onToolApprovalResolved?.(ev.gateId, ev.approved); break;
+    case "progress": h.onProgress?.(ev.done, ev.total, ev.label); break;
+    case "summary": h.onSummary?.(ev.succeeded, ev.skipped, ev.failed); break;
     case "cost": h.onCost?.(ev.totalUsd); break;
     case "error": h.onError?.(ev.message); break;
     case "done": h.onDone?.(); break;
+  }
+}
+
+export interface ExecuteStreamInput {
+  genesisProjectId: number;
+  plan: unknown;
+  backendOption: "reuse-supabase" | "dedicated-cloud" | "skip";
+}
+
+/** Start Stage B (execute). Same retry-before-stream-starts semantics as
+ *  streamImport. Once the stream starts, it is never replayed. */
+export async function streamExecute(
+  input: ExecuteStreamInput,
+  handlers: ImportStreamHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  for (let attempt = 0; attempt < STREAM_START_MAX_ATTEMPTS; attempt += 1) {
+    let res: Response;
+    try {
+      res = await fetch("/api/github/execute", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          genesisProjectId: input.genesisProjectId,
+          plan: input.plan,
+          backendOption: input.backendOption,
+        }),
+        signal,
+      });
+    } catch (error) {
+      if (signal?.aborted || attempt === STREAM_START_MAX_ATTEMPTS - 1) throw error;
+      handlers.onStatus?.("Connection interrupted. Reconnecting…");
+      await waitForRetry(retryDelay(attempt), signal);
+      continue;
+    }
+
+    if (!res.ok || !res.body) {
+      let message = `Execute request failed (${res.status})`;
+      try {
+        const p = (await res.json()) as { error?: string; message?: string };
+        message = p.message || p.error || message;
+      } catch {
+        /* non-JSON error body */
+      }
+
+      if (RETRYABLE_START_STATUSES.has(res.status) && attempt < STREAM_START_MAX_ATTEMPTS - 1) {
+        handlers.onStatus?.("Connection interrupted. Reconnecting…");
+        await waitForRetry(retryDelay(attempt), signal);
+        continue;
+      }
+      throw new Error(message);
+    }
+
+    await consumeStream(res, handlers);
+    return;
   }
 }

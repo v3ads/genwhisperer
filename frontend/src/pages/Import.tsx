@@ -11,7 +11,7 @@ import {
   type Tier,
   type SubscriptionState,
 } from "../lib/api";
-import { streamImport } from "../lib/importStream";
+import { streamImport, streamExecute } from "../lib/importStream";
 import "./Import.css";
 
 /** The plan shape returned by Stage A (kept loose — the server is the source of truth). */
@@ -39,7 +39,7 @@ interface ImportPlan {
 }
 
 /** One step in the import flow. */
-type Step = "project" | "repo" | "review" | "running";
+type Step = "project" | "repo" | "review" | "running" | "executing" | "done";
 
 export default function Import() {
   const [loading, setLoading] = useState(true);
@@ -51,6 +51,10 @@ export default function Import() {
   const [selectedProject, setSelectedProject] = useState<number | null>(null);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null);
+  const [backendOption, setBackendOption] = useState<"reuse-supabase" | "dedicated-cloud" | "skip">("skip");
+  const [progress, setProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+  const [summary, setSummary] = useState<{ succeeded: string[]; skipped: string[]; failed: Array<{ label: string; error: string }> } | null>(null);
+  const [pendingGate, setPendingGate] = useState<{ gateId: string; tool: string } | null>(null);
   const [branch, setBranch] = useState("main");
   const [step, setStep] = useState<Step>("project");
   const [status, setStatus] = useState<string | null>(null);
@@ -136,7 +140,39 @@ export default function Import() {
         onStatus: (t) => setStatus(t),
         onPlan: (p) => setPlan(p as ImportPlan),
         onError: (m) => { setErr(m); setStep("review"); },
-        onDone: () => { setBusy(false); if (!err) setStep("review"); },
+        onDone: () => { setBusy(false); setStep("review"); },
+      },
+      ctrl.signal
+    );
+  }
+
+  function startExecute() {
+    if (!selectedProject || !plan) return;
+    setStep("executing");
+    setStatus("Executing the plan on Genesis…");
+    setErr(null);
+    setSummary(null);
+    setProgress(null);
+    setPendingGate(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    void streamExecute(
+      {
+        genesisProjectId: selectedProject,
+        plan,
+        backendOption,
+      },
+      {
+        onStatus: (t) => setStatus(t),
+        onProgress: (d, tot, label) => setProgress({ done: d, total: tot, label }),
+        onToolApprovalRequest: (gateId, tool) => setPendingGate({ gateId, tool }),
+        onToolApprovalResolved: (gateId, approved) => {
+          setPendingGate(null);
+          void githubApi.approveGate(gateId, approved).catch(() => { /* surfaced via status */ });
+        },
+        onSummary: (s, sk, f) => { setSummary({ succeeded: s, skipped: sk, failed: f }); },
+        onError: (m) => { setErr(m); setStep("review"); },
+        onDone: () => { setBusy(false); setStep("done"); },
       },
       ctrl.signal
     );
@@ -326,14 +362,23 @@ export default function Import() {
                   <>
                     <h4>Backend — choose an option</h4>
                     <p className="sub">{plan.backend.summary}</p>
-                    {plan.backend.options.map((o) => (
-                      <div key={o.key} className="plan-option">
-                        <div className="plan-option-label"><b>{o.label}</b></div>
-                        <div className="sub">GenWhisperer will: {o.agentDoes}</div>
-                        <div className="sub">You do first: {o.userDoes}</div>
-                        <div className="sub">Recommended when: {o.recommendedWhen}</div>
-                      </div>
-                    ))}
+                    <div className="backend-options">
+                      {plan.backend.options.map((o) => (
+                        <label key={o.key} className={`backend-option ${backendOption === o.key ? "selected" : ""}`}>
+                          <input
+                            type="radio"
+                            name="backend-option"
+                            value={o.key}
+                            checked={backendOption === o.key}
+                            onChange={() => setBackendOption(o.key)}
+                          />
+                          <div className="plan-option-label"><b>{o.label}</b></div>
+                          <div className="sub">GenWhisperer will: {o.agentDoes}</div>
+                          <div className="sub">You do first: {o.userDoes}</div>
+                          <div className="sub">Recommended when: {o.recommendedWhen}</div>
+                        </label>
+                      ))}
+                    </div>
                   </>
                 )}
 
@@ -348,11 +393,113 @@ export default function Import() {
                   </>
                 )}
 
-                <div className="banner banner-info">
-                  Phase 3 shows the plan only. Executing it on Genesis (Stage B) is the next phase — not yet wired up.
+                <div className="btn-row">
+                  <button className="btn btn-primary" onClick={startExecute} disabled={busy}>
+                    {busy ? "Working…" : "Execute on Genesis"}
+                  </button>
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* Step 5: executing (Stage B) */}
+        {step === "executing" && (
+          <div className="card">
+            <h3>5. Recreating your site on Genesis</h3>
+            {status && <div className="banner banner-info">{status}</div>}
+            {progress && (
+              <div className="progress-wrap">
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }}
+                  />
+                </div>
+                <div className="sub">
+                  {progress.done}/{progress.total} — {progress.label}
+                </div>
+              </div>
+            )}
+            {pendingGate && (
+              <div className="banner banner-warn">
+                <b>Approval needed:</b> {pendingGate.tool === "genesis_publish" ? "Publish your site to the live CDN" : pendingGate.tool === "genesis_cloud_migrate" ? "Migrate the backend schema to Dedicated Cloud" : pendingGate.tool}
+                <div className="btn-row" style={{ marginTop: 8 }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      const g = pendingGate;
+                      setPendingGate(null);
+                      void githubApi.approveGate(g.gateId, true).catch(() => setPendingGate(g));
+                    }}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const g = pendingGate;
+                      setPendingGate(null);
+                      void githubApi.approveGate(g.gateId, false).catch(() => setPendingGate(g));
+                    }}
+                  >
+                    Deny
+                  </button>
+                </div>
+              </div>
+            )}
+            {busy && !pendingGate && (
+              <div className="btn-row">
+                <button className="btn btn-ghost" onClick={cancel}>Cancel</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Done: summary */}
+        {step === "done" && summary && (
+          <div className="card">
+            <h3>Import complete</h3>
+            {summary.failed.length === 0 ? (
+              <div className="banner banner-ok">
+                Done — {summary.succeeded.length} step(s) succeeded
+                {summary.skipped.length > 0 ? `, ${summary.skipped.length} skipped` : ""}.
+              </div>
+            ) : (
+              <div className="banner banner-warn">
+                Partial: {summary.succeeded.length} succeeded, {summary.skipped.length} skipped, {summary.failed.length} failed.
+              </div>
+            )}
+            {summary.succeeded.length > 0 && (
+              <>
+                <h4>Succeeded</h4>
+                <ul className="plan-list">
+                  {summary.succeeded.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </>
+            )}
+            {summary.skipped.length > 0 && (
+              <>
+                <h4>Skipped</h4>
+                <ul className="plan-list">
+                  {summary.skipped.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </>
+            )}
+            {summary.failed.length > 0 && (
+              <>
+                <h4>Failed</h4>
+                <ul className="plan-list">
+                  {summary.failed.map((f, i) => <li key={i}>{f.label} — <span className="sub">{f.error}</span></li>)}
+                </ul>
+              </>
+            )}
+            <div className="btn-row">
+              <a className="btn btn-primary" href="/builder">Open in Builder</a>
+              <button className="btn btn-ghost" onClick={() => { setStep("project"); setPlan(null); setSummary(null); }}>
+                Import another repo
+              </button>
+            </div>
           </div>
         )}
       </main>

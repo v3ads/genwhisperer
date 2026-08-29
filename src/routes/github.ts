@@ -36,6 +36,12 @@ import {
 } from "../services/github.js";
 import { buildRepoDigest } from "../services/repoDigest.js";
 import { planImport, type ImportPlan, type ImportPlannerInput } from "../services/importPlanner.js";
+import {
+  runImport,
+  resolveImportGate,
+  type ImportRunnerInput,
+} from "../services/importRunner.js";
+import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
 import { z } from "zod";
 
@@ -396,6 +402,172 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
       res.end();
     }
   }
+});
+
+// ─── POST /api/github/execute ───────────────────────────────────────────────
+// Stage B of the GitHub → Genesis import. Pro-only SSE route: takes a
+// confirmed ImportPlan (from Stage A) + the user's chosen backend option,
+// decrypts the Genesis token, connects a GenesisMcpClient, and runs the
+// runner. Emits {status|tool_approval_request|tool_approval_resolved|
+// progress|summary|error|done}. The publish + Dedicated Cloud migrate
+// steps are confirm-gated (pause until POST /api/github/approve/:gateId).
+//
+// The plan is sent in the request body (the frontend already has it from
+// Stage A). We do NOT re-run the planner here — Stage A and Stage B are
+// deliberately separate so the user can review the plan between them.
+router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => {
+  const gate = await requirePro(req, res);
+  if (!gate) return;
+  const userId = gate.userId;
+
+  const schema = z.object({
+    genesisProjectId: z.number().int().positive(),
+    plan: z.record(z.unknown()),
+    backendOption: z.enum(["reuse-supabase", "dedicated-cloud", "skip"]),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid input" });
+    return;
+  }
+  const { genesisProjectId, plan: planRaw, backendOption } = parsed.data;
+  const requestId = randomUUID();
+  res.setHeader("X-Import-Request-Id", requestId);
+
+  // Load the target Genesis project (ownership-checked) + decrypt the token.
+  const projRows = await db
+    .select()
+    .from(genesisProjects)
+    .where(eq(genesisProjects.id, genesisProjectId))
+    .limit(1);
+  if (!projRows.length || projRows[0].userId !== userId) {
+    res.status(404).json({ error: "Genesis project not found" });
+    return;
+  }
+  const project = projRows[0];
+  let genesisToken: string;
+  try {
+    genesisToken = decrypt(project.tokenEncrypted);
+  } catch {
+    res.status(500).json({ error: "Could not read the Genesis token. Update it in Projects." });
+    return;
+  }
+
+  // Load the GitHub PAT (for the getBlob re-fetch closure).
+  const ghRows = await db
+    .select()
+    .from(githubTokens)
+    .where(eq(githubTokens.userId, userId))
+    .limit(1);
+  if (!ghRows.length) {
+    res.status(400).json({ error: "Connect your GitHub account first." });
+    return;
+  }
+  let githubToken: string;
+  try {
+    githubToken = decrypt(ghRows[0].encryptedToken);
+  } catch {
+    res.status(500).json({ error: "Could not read your stored GitHub token. Reconnect it." });
+    return;
+  }
+  // Read repo owner/name/branch off the plan (the planner carried them).
+  const plan = planRaw as ImportPlan;
+  const { owner, name, branch } = plan.repo;
+
+  // SSE headers.
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  res.write(": connected\n\n");
+  (res as Response & { flush?: () => void }).flush?.();
+
+  let closed = false;
+  const emit = (ev: Record<string, unknown>) => {
+    if (closed) return;
+    res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    (res as Response & { flush?: () => void }).flush?.();
+  };
+  const heartbeat = setInterval(() => {
+    if (!closed && !res.writableEnded) {
+      res.write(": keepalive\n\n");
+      (res as Response & { flush?: () => void }).flush?.();
+    }
+  }, 15_000);
+  res.on("close", () => {
+    closed = true;
+    clearInterval(heartbeat);
+  });
+
+  const sink = { emit: (ev) => emit(ev), closed: () => closed };
+
+  // Connect the Genesis MCP client (one per run; initialize is idempotent).
+  const mcp = new GenesisMcpClient(project.mcpUrl, genesisToken);
+
+  // getBlob re-fetch closure: re-fetch a source file's content by repo path.
+  // The runner uses this to get the content for genesis_write_file calls
+  // (the plan carries paths, not content).
+  const refetchBlob = async (repoPath: string): Promise<string> => {
+    // Resolve repoPath → tree entry SHA. We don't have the tree here, so
+    // use the GitHub contents API directly (works for files ≤1MB; larger
+    // files need the blobs API, but the planner already capped content at
+    // 256KB so this path covers the inlined set).
+    const r = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeURIComponent(
+        repoPath
+      )}?ref=${encodeURIComponent(branch)}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${githubToken}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "genwhisperer",
+        },
+      }
+    );
+    if (!r.ok) {
+      throw new Error(`GitHub returned HTTP ${r.status} while re-fetching ${repoPath}`);
+    }
+    const j = (await r.json()) as { content?: string; encoding?: string };
+    if (j.encoding === "base64" && j.content) {
+      return Buffer.from(j.content.replace(/\n/g, ""), "base64").toString("utf8");
+    }
+    return j.content ?? "";
+  };
+
+  const runnerInput: ImportRunnerInput = {
+    mcp,
+    plan,
+    backendOption,
+    refetchBlob,
+    requestId,
+  };
+
+  try {
+    await runImport(runnerInput, sink);
+  } catch (e) {
+    emit({ type: "error", message: (e as Error).message });
+  } finally {
+    clearInterval(heartbeat);
+    if (!closed) {
+      emit({ type: "done" });
+      res.end();
+    }
+  }
+});
+
+// ─── POST /api/github/approve/:gateId ──────────────────────────────────────────
+// Resolve a pending Stage B approval gate (publish / Dedicated Cloud migrate).
+// Mirrors the agent /approve/:gateId route.
+router.post("/approve/:gateId", requireAuth, async (req: AuthRequest, res) => {
+  const approved = req.body?.approved === true;
+  const ok = resolveImportGate(String(req.params.gateId), approved);
+  if (!ok) {
+    res.status(404).json({ error: "No pending import gate with that id (it may have expired)." });
+    return;
+  }
+  res.json({ success: true, approved });
 });
 
 export default router;
