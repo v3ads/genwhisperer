@@ -542,18 +542,16 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     if (!isSafeRepoPath(repoPath)) {
       throw new Error("Invalid repo path for content re-fetch.");
     }
-    // Resolve repoPath → tree entry SHA. We don't have the tree here, so
-    // use the GitHub contents API directly (works for files ≤1MB; larger
-    // files need the blobs API, but the planner already capped content at
-    // 256KB so this path covers the inlined set).
-    const url = new URL(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeURIComponent(
-        repoPath
-      )}?ref=${encodeURIComponent(branch)}`
-    );
-    // Belt-and-suspenders: the URL host MUST be api.github.com. encodeURIComponent
-    // on the segments prevents `://` injection, but assert the host too so
-    // a future refactor can't accidentally widen the SSRF surface.
+    // Build the URL from a hard-coded api.github.com origin, then set the
+    // path + query from the validated, encoded user input. The host is a
+    // literal constant (never derived from user input), so the outbound
+    // request provably targets api.github.com.
+    const url = new URL("https://api.github.com");
+    url.pathname = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/contents/${encodeURIComponent(repoPath)}`;
+    url.searchParams.set("ref", branch);
+    // Belt-and-suspenders: assert the host is still api.github.com (a
+    // future refactor that changes the origin can't accidentally widen the
+    // SSRF surface without this tripping).
     if (url.host !== "api.github.com") {
       throw new Error("Content re-fetch URL did not resolve to api.github.com.");
     }
