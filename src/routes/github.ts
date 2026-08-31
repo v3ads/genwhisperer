@@ -40,6 +40,7 @@ import {
   runImport,
   resolveImportGate,
   type ImportRunnerInput,
+  type ImportEvent,
 } from "../services/importRunner.js";
 import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
@@ -493,7 +494,7 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     return;
   }
   // Read repo owner/name/branch off the plan (the planner carried them).
-  const plan = planRaw as ImportPlan;
+  const plan = planRaw as unknown as ImportPlan;
   const { owner, name, branch } = plan.repo;
 
   // SSE headers.
@@ -522,7 +523,10 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
     clearInterval(heartbeat);
   });
 
-  const sink = { emit: (ev) => emit(ev), closed: () => closed };
+  const sink = {
+    emit: (ev: ImportEvent) => emit(ev as unknown as Record<string, unknown>),
+    closed: () => closed,
+  };
 
   // Connect the Genesis MCP client (one per run; initialize is idempotent).
   const mcp = new GenesisMcpClient(project.mcpUrl, genesisToken);
