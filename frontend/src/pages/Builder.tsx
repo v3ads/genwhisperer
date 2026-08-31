@@ -551,7 +551,7 @@ export default function Builder() {
                   ))}
                   {retryAvailable !== null && !busy && (
                     <div className="retry-bar">
-                      <span className="retry-msg">The model timed out. This can happen when a conversation gets long.</span>
+                      <span className="retry-msg">The model took too long to respond. We suggest switching to a faster model (such as Qwen 3.8 Flash, Claude 3.5 Sonnet, or Gemini Flash) from the dropdown above, or retrying with a shorter conversation history.</span>
                       <div className="retry-actions">
                         <button className="btn btn-retry" onClick={() => void send(true)}>Retry with shorter history</button>
                         <button className="btn btn-ghost" onClick={() => void send()}>Try again</button>
