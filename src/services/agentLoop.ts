@@ -403,8 +403,8 @@ export async function runAgentLoop(
             break;
           }
           // Timeout with the user still watching: tell them what happened and
-          // signal the frontend to show a "Retry with shorter history" button.
-          errorMessage = "The model is taking longer than expected to respond. Please try again — your message was saved, so you can pick up where you left off.";
+          // suggest switching to a faster model or retrying with shorter history.
+          errorMessage = "The selected model took too long to respond. We suggest switching to a faster model (such as Qwen 3.8 Flash, Claude 3.5 Sonnet, or Gemini Flash) from the model picker above, or retrying with a shorter conversation history.";
           safeEmit({ type: "narration", text: errorMessage });
           if (conversationId) {
             safeEmit({ type: "timeout_retry_available", conversationId: conversationId as number });
