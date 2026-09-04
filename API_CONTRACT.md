@@ -104,6 +104,10 @@ Remove a project. Cascades to its conversations. → `204`.
 
 ## Agent (the loop + history + KB)
 
+### `POST /api/agent/blueprints/interpret`  `requireAuth`
+
+Deterministically interprets JSON, Markdown, or plain-text blueprint input. Body: `{ "text": "..." }`. Returns the canonical `blueprint`, detected `inputFormat`, `missingFields`, `warnings`, and a safely delimited `agentMessage`. It does not call OpenRouter or Genesis. Empty, extremely short, oversized (over 20,000 characters), and unusable inputs return specific 4xx errors.
+
 ### `POST /api/agent/message`  `requireAuth`  · **SSE stream**
 Run the agent loop. Returns `text/event-stream`; each line is `data: <json>\n\n` where `<json>` is an `AgentEvent` (see below).
 

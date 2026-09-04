@@ -12,6 +12,7 @@ import {
   type KbSource,
   type SubscriptionState,
   type PagesCountResult,
+  type BlueprintInterpretation,
 } from "../lib/api";
 import { streamAgent } from "../lib/agentStream";
 import { mdToHtml } from "../lib/mdToHtml";
@@ -40,6 +41,18 @@ interface KbEntry {
 
 const DEFAULT_MODEL = "z-ai/glm-5.2";
 
+function historyUserText(content: string): string {
+  if (!content.includes("<business_blueprint_json>")) return content;
+  const match = content.match(/<business_blueprint_json>\s*([\s\S]*?)\s*<\/business_blueprint_json>/);
+  try {
+    const blueprint = JSON.parse(match?.[1] || "{}") as { workingTitle?: string; businessName?: string; paidProduct?: { name?: string } };
+    const title = blueprint.workingTitle || blueprint.businessName || blueprint.paidProduct?.name || "business blueprint";
+    return `Imported blueprint: **${title}**`;
+  } catch {
+    return "Imported business blueprint";
+  }
+}
+
 export default function Builder() {
   const [params] = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -55,6 +68,11 @@ export default function Builder() {
   const [gates, setGates] = useState<Gate[]>([]);
   const [kbEntries, setKbEntries] = useState<KbEntry[]>([]);
   const [input, setInput] = useState("");
+  const [builderMode, setBuilderMode] = useState<"choose" | "idea" | "blueprint-paste" | "blueprint-review">("choose");
+  const [blueprintText, setBlueprintText] = useState("");
+  const [blueprintResult, setBlueprintResult] = useState<BlueprintInterpretation | null>(null);
+  const [blueprintError, setBlueprintError] = useState<string | null>(null);
+  const [interpretingBlueprint, setInterpretingBlueprint] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState("Enter to send · Shift+Enter for newline");
   const [elapsed, setElapsed] = useState(0);
@@ -167,9 +185,10 @@ export default function Builder() {
       try {
         const d = await agentApi.getConversation(cid);
         setConversationId(d.conversation.id);
+        setBuilderMode("idea");
         const resumed: Row[] = [];
         for (const m of d.messages) {
-          if (m.role === "user") resumed.push({ id: `h${m.id}`, kind: "user", text: m.content });
+          if (m.role === "user") resumed.push({ id: `h${m.id}`, kind: "user", text: historyUserText(m.content) });
           else if (m.role === "assistant") {
             // Suppress technical tool-call preambles on resume. During a live
             // turn these are intentionally NOT rendered (agentLoop comment:
@@ -203,8 +222,8 @@ export default function Builder() {
   // ── Send a message ────────────────────────────────────────────────────────
   // compressHistory: when true (the "Retry with shorter history" button), the
   // server trims replayed history before sending to the model.
-  async function send(compressHistory = false) {
-    const text = input.trim();
+  async function send(compressHistory = false, messageOverride?: string, displayOverride?: string) {
+    const text = (messageOverride ?? input).trim();
     // Block submission while the empty-project guard is up.
     // Allow send with an image even if text is empty (the user might just
     // share an image with no message). But require either text or an image.
@@ -217,7 +236,7 @@ export default function Builder() {
     setElapsed(0);
     setRetryAvailable(null);
     setHint("Initiating your request…");
-    addRow("user", text || "📎 Shared an image");
+    addRow("user", displayOverride || text || "📎 Shared an image");
 
     // Start an elapsed-seconds counter so the user sees time passing
     // instead of a static line during long agent turns.
@@ -290,6 +309,27 @@ export default function Builder() {
         elapsedTimerRef.current = null;
       }
     }
+  }
+
+  async function interpretBlueprint() {
+    setBlueprintError(null);
+    setInterpretingBlueprint(true);
+    try {
+      const result = await agentApi.interpretBlueprint(blueprintText);
+      setBlueprintResult(result);
+      setBuilderMode("blueprint-review");
+    } catch (error) {
+      setBlueprintError(error instanceof ApiError ? error.message : "The blueprint could not be interpreted.");
+    } finally {
+      setInterpretingBlueprint(false);
+    }
+  }
+
+  async function startBlueprintBuild() {
+    if (!blueprintResult || !projectId) return;
+    setBuilderMode("idea");
+    const title = blueprintResult.blueprint.workingTitle || blueprintResult.blueprint.businessName || blueprintResult.blueprint.paidProduct.name || "business blueprint";
+    await send(false, blueprintResult.agentMessage, `Imported blueprint: **${title}**`);
   }
 
   function stop() {
@@ -491,6 +531,92 @@ export default function Builder() {
           <div className="b-chat">
             {loading ? (
               <div className="setup-gate"><p>Loading…</p></div>
+            ) : builderMode === "choose" ? (
+              <div className="blueprint-flow blueprint-chooser">
+                <div className="blueprint-intro">
+                  <span className="blueprint-eyebrow">Choose a starting point</span>
+                  <h1>What are you bringing into the Builder?</h1>
+                  <p>You can start a normal conversation or bring in a business plan created elsewhere.</p>
+                </div>
+                <div className="blueprint-choice-grid">
+                  <button className="blueprint-choice" type="button" onClick={() => setBuilderMode("idea")}>
+                    <span className="blueprint-choice-icon">✦</span>
+                    <strong>Start with an idea</strong>
+                    <span>Describe what you want to build or change, just as before.</span>
+                  </button>
+                  <button className="blueprint-choice" type="button" onClick={() => setBuilderMode("blueprint-paste")}>
+                    <span className="blueprint-choice-icon">⇩</span>
+                    <strong>Import a business blueprint</strong>
+                    <span>Paste JSON, Markdown, or plain text, then review it before anything runs.</span>
+                  </button>
+                </div>
+              </div>
+            ) : builderMode === "blueprint-paste" ? (
+              <div className="blueprint-flow">
+                <button className="blueprint-back" type="button" onClick={() => setBuilderMode("choose")}>← Back</button>
+                <div className="blueprint-card">
+                  <span className="blueprint-step">Step 1 of 2</span>
+                  <h1>Import Business Blueprint</h1>
+                  <p>Paste the business blueprint generated by the Opportunity Architect. GenWhisperer will review it before making any changes to your Genesis project.</p>
+                  <label htmlFor="blueprint-input">Business blueprint</label>
+                  <textarea
+                    id="blueprint-input"
+                    className="blueprint-textarea"
+                    value={blueprintText}
+                    onChange={(event) => setBlueprintText(event.target.value)}
+                    placeholder="Paste JSON, Markdown, or plain text here…"
+                    maxLength={20_001}
+                  />
+                  <div className="blueprint-security"><strong>Keep secrets out.</strong> Never paste OpenRouter keys, Genesis tokens, passwords, payment credentials, or customer personal information.</div>
+                  {blueprintError && <div className="blueprint-error" role="alert">{blueprintError}</div>}
+                  <div className="blueprint-actions">
+                    <span>{blueprintText.length.toLocaleString()} / 20,000 characters</span>
+                    <button className="btn btn-primary" type="button" disabled={interpretingBlueprint || !blueprintText.trim()} onClick={() => void interpretBlueprint()}>
+                      {interpretingBlueprint ? "Reviewing…" : "Review blueprint"}
+                    </button>
+                  </div>
+                  <p className="blueprint-footnote">Reviewing does not call OpenRouter, consume model tokens, contact Genesis, or change your project.</p>
+                </div>
+              </div>
+            ) : builderMode === "blueprint-review" && blueprintResult ? (
+              <div className="blueprint-flow">
+                <button className="blueprint-back" type="button" onClick={() => setBuilderMode("blueprint-paste")}>← Edit or replace blueprint</button>
+                <div className="blueprint-card blueprint-review">
+                  <span className="blueprint-step">Step 2 of 2 · {blueprintResult.inputFormat.replace("_", " ")}</span>
+                  <h1>Review before building</h1>
+                  {blueprintResult.warnings.map((warning) => <div className="blueprint-warning" key={warning}>{warning}</div>)}
+                  <div className="blueprint-summary">
+                    <div><span>Working name</span><strong>{blueprintResult.blueprint.workingTitle || blueprintResult.blueprint.businessName || "Not provided"}</strong></div>
+                    <div><span>Target audience</span><strong>{blueprintResult.blueprint.audience}</strong></div>
+                    <div><span>Problem</span><strong>{blueprintResult.blueprint.customerProblem}</strong></div>
+                    <div><span>Lead magnet</span><strong>{blueprintResult.blueprint.leadMagnet.name || blueprintResult.blueprint.leadMagnet.description || "To clarify with the agent"}</strong></div>
+                    <div><span>Paid digital kit</span><strong>{blueprintResult.blueprint.paidProduct.name || blueprintResult.blueprint.paidProduct.description}</strong></div>
+                    <div><span>Suggested price</span><strong>{blueprintResult.blueprint.paidProduct.suggestedPrice || "Not provided"}</strong></div>
+                    <div><span>Required pages</span><strong>{blueprintResult.blueprint.requiredPages?.join(", ") || "Sales, lead magnet, and thank-you/access pages"}</strong></div>
+                    <div><span>Delivery</span><strong>{blueprintResult.blueprint.delivery?.method || blueprintResult.blueprint.delivery?.accessInstructions || "Immediate access/delivery; details to clarify"}</strong></div>
+                    <div><span>Follow-up sequence</span><strong>{blueprintResult.blueprint.followUpEmails?.length ? `${blueprintResult.blueprint.followUpEmails.length} email${blueprintResult.blueprint.followUpEmails.length === 1 ? "" : "s"}` : "Short sequence; details to clarify"}</strong></div>
+                  </div>
+                  <div className="blueprint-review-section">
+                    <h2>Assumptions and missing information</h2>
+                    <p>{[...(blueprintResult.blueprint.assumptions || []), ...blueprintResult.missingFields].join(" · ") || "No material gaps identified by the importer. The agent will still confirm its understanding."}</p>
+                  </div>
+                  <div className="blueprint-selection">
+                    <label>Genesis project<select value={projectId} onChange={(event) => setProjectId(Number(event.target.value))}>
+                      <option value="">Select a connected project</option>
+                      {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                    </select></label>
+                    <label>OpenRouter model<select value={model} onChange={(event) => setModel(event.target.value)}>
+                      {models.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}
+                    </select></label>
+                  </div>
+                  {projects.length === 0 && <div className="blueprint-error">No Genesis project is connected. <a href="/projects">Connect a project</a> to continue.</div>}
+                  {!hasKey && !sub?.usePlatformKey && <div className="blueprint-error">No OpenRouter key is available. <a href="/profile">Add your key</a> to continue.</div>}
+                  <div className="blueprint-actions">
+                    <span>Nothing changes until you press the button.</span>
+                    <button className="btn btn-primary" type="button" disabled={!projectId || (!hasKey && !sub?.usePlatformKey)} onClick={() => void startBlueprintBuild()}>Review with GenWhisperer</button>
+                  </div>
+                </div>
+              </div>
             ) : setupMsg ? (
               <div className="setup-gate">
                 <h2>Almost ready</h2>

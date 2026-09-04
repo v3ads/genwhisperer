@@ -41,8 +41,35 @@ import {
 import { logSessionToAITable, type ChatMessage as AitableChatMessage } from "../services/aitable.js";
 import { z } from "zod";
 import { logAgentLaunch } from "../utils/launchObservability.js";
+import {
+  BlueprintError,
+  blueprintAgentMessage,
+  interpretBusinessBlueprint,
+} from "../services/businessBlueprint.js";
 
 const router: ReturnType<typeof Router> = Router();
+
+// Deterministic only: this endpoint does not call OpenRouter or Genesis.
+router.post("/blueprints/interpret", requireAuth, (req: AuthRequest, res: Response) => {
+  const parsed = z.object({ text: z.string() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Blueprint text is required." });
+    return;
+  }
+  try {
+    const result = interpretBusinessBlueprint(parsed.data.text);
+    res.json({
+      ...result,
+      agentMessage: blueprintAgentMessage(result.blueprint, result.missingFields),
+    });
+  } catch (error) {
+    if (error instanceof BlueprintError) {
+      res.status(error.code === "too_large" ? 413 : 400).json({ error: error.message, code: error.code });
+      return;
+    }
+    res.status(500).json({ error: "The blueprint could not be interpreted." });
+  }
+});
 
 // ─── POST /api/agent/message ───────────────────────────────────────────────────
 // Start (or resume) an agent turn. Streams SSE events from the agent loop.
@@ -55,7 +82,10 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
   const schema = z.object({
     genesisProjectId: z.number().int().positive(),
     conversationId: z.number().int().positive().optional(),
-    message: z.string().min(1).max(8000),
+    // Imported blueprints preserve both normalized requirements and the
+    // original source, so their deliberate first turn can be larger than a
+    // normal composer message while remaining bounded.
+    message: z.string().min(1).max(50_000),
     model: z.string().optional(),
     /** When true, the agent loop trims replayed history to the last few turns
      *  before sending to the model — reduces context size so a reasoning

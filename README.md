@@ -174,6 +174,7 @@ Migrations: `0000` (initial), `0001` (revoked_sessions), `0002` (usage indexes),
 | `PATCH` | `/api/projects/:id` | `requireAuth` | Update project name and/or refresh token |
 | `DELETE` | `/api/projects/:id` | `requireAuth` | Remove project (cascades to conversations) |
 | `POST` | `/api/agent/message` | `requireAuth` | Run the agent loop (SSE stream) |
+| `POST` | `/api/agent/blueprints/interpret` | `requireAuth` | Parse and validate an imported blueprint without calling AI or Genesis |
 | `POST` | `/api/agent/approve/:gateId` | `requireAuth` | Approve/deny a pending write gate |
 | `GET` | `/api/agent/conversations` | `requireAuth` | List conversations |
 | `GET` | `/api/agent/conversations/:id` | `requireAuth` | Load a conversation's history |
@@ -236,6 +237,16 @@ genwhisperer/
 ```bash
 npm test          # 8 Vitest unit tests (crypto + jwt)
 ```
+
+## Import Business Blueprint
+
+The Builder offers the existing free-form conversation and **Import a business blueprint**. The importer accepts structured JSON, Markdown, or labeled plain text from an external planning tool. It needs enough information to identify the target audience, customer problem, and paid digital product; a missing lead magnet can be clarified with the agent.
+
+Importing and reviewing are deterministic. They do not call OpenRouter, consume model tokens, contact Genesis, or modify a Genesis project. Only **Review with GenWhisperer** starts an agent conversation. The normalized blueprint and original source are preserved in the first conversation message for later resume. Existing project ownership checks and high-impact approval gates remain in effect. Model usage is paid directly through the user's saved OpenRouter key; GenWhisperer adds no usage fee.
+
+Never paste API keys, Genesis tokens, passwords, payment credentials, customer personal information, or other secrets into a blueprint. Imported content is untrusted project context, not a system instruction.
+
+Opportunity Architect is a separate, future Custom GPT concept. It is not part of GenWhisperer and is not currently provided by this importer.
 
 ---
 

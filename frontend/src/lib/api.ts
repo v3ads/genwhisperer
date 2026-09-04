@@ -94,6 +94,30 @@ export interface KbQueryResult {
   responseTimeMs?: number;
 }
 
+export interface BusinessBlueprint {
+  businessName?: string;
+  workingTitle?: string;
+  audience: string;
+  customerProblem: string;
+  valueProposition?: string;
+  paidProduct: { name: string; description: string; format?: string; contents?: string[]; suggestedPrice?: string };
+  leadMagnet: { name: string; description: string; format?: string };
+  delivery?: { method?: string; accessInstructions?: string };
+  followUpEmails?: Array<{ subject?: string; purpose?: string; body?: string }>;
+  requiredPages?: string[];
+  assumptions?: string[];
+  limitations?: string[];
+  sourceText: string;
+}
+
+export interface BlueprintInterpretation {
+  blueprint: BusinessBlueprint;
+  inputFormat: "json" | "markdown" | "plain_text";
+  missingFields: string[];
+  warnings: string[];
+  agentMessage: string;
+}
+
 // --- core fetch helper -----------------------------------------------------
 
 const BASE = "/api";
@@ -205,6 +229,11 @@ export const projects = {
 // --- agent (V2) — conversations + kb (the SSE message stream is in agentStream.ts) ---
 
 export const agent = {
+  interpretBlueprint: (text: string) =>
+    request<BlueprintInterpretation>("/agent/blueprints/interpret", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
   conversations: () => request<{ conversations: ConversationSummary[] }>("/agent/conversations"),
   getConversation: (id: number) => request<ConversationDetail>(`/agent/conversations/${id}`),
   deleteConversation: (id: number) => request<void>(`/agent/conversations/${id}`, { method: "DELETE" }),
