@@ -82,31 +82,31 @@ export async function kbAsk(
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ASK_TIMEOUT_MS);
-  let r: Response;
   try {
-    r = await fetch(KB_CHAT_URL, {
+    const r = await fetch(KB_CHAT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": kbKey() },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
+    if (r.status === 401) {
+      throw Object.assign(new Error("KB 401: invalid API key."), { code: 401 });
+    }
+    if (r.status === 422) {
+      const t = await r.text().catch(() => "");
+      throw new Error(`KB 422: ${t.slice(0, 200)}`);
+    }
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      throw new Error(`KB HTTP ${r.status}: ${t.slice(0, 300)}`);
+    }
+    return (await r.json()) as KbAnswer;
   } catch (e) {
-    clearTimeout(timer);
     const err = e as Error;
-    if (err.name === "AbortError") throw new Error("KB query timed out (60s).");
-    throw new Error(`KB unreachable: ${err.message}`);
+    if (ctrl.signal.aborted || err.name === "AbortError") throw new Error("KB query timed out (60s).");
+    if (err instanceof TypeError) throw new Error(`KB unreachable: ${err.message}`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  clearTimeout(timer);
-  if (r.status === 401) {
-    throw Object.assign(new Error("KB 401: invalid API key."), { code: 401 });
-  }
-  if (r.status === 422) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`KB 422: ${t.slice(0, 200)}`);
-  }
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`KB HTTP ${r.status}: ${t.slice(0, 300)}`);
-  }
-  return (await r.json()) as KbAnswer;
 }

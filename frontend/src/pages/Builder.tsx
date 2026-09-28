@@ -14,7 +14,7 @@ import {
   type PagesCountResult,
   type BlueprintInterpretation,
 } from "../lib/api";
-import { streamAgent } from "../lib/agentStream";
+import { streamAgent, type AgentEvent } from "../lib/agentStream";
 import { mdToHtml } from "../lib/mdToHtml";
 import "./Builder.css";
 
@@ -30,6 +30,9 @@ interface Gate {
   tool: string;
   args: Record<string, unknown>;
   resolved?: "approved" | "denied";
+  finished?: boolean;
+  ended?: boolean;
+  resolving?: boolean;
 }
 /** A KB side-panel entry. */
 interface KbEntry {
@@ -77,6 +80,11 @@ export default function Builder() {
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState("Enter to send · Shift+Enter for newline");
   const [elapsed, setElapsed] = useState(0);
+  const [clock, setClock] = useState(Date.now());
+  const [progress, setProgress] = useState<Extract<AgentEvent, { type: "progress" }> | null>(null);
+  const [lastCompletedAction, setLastCompletedAction] = useState<string | null>(null);
+  const [lastProgressAt, setLastProgressAt] = useState<number | null>(null);
+  const [lastSignalAt, setLastSignalAt] = useState<number | null>(null);
   const [cost, setCost] = useState(0);
   const [kbQuery, setKbQuery] = useState("");
   // Set when the backend signals a timeout_retry_available event; holds the
@@ -94,6 +102,7 @@ export default function Builder() {
   // Elapsed-seconds timer: runs only while busy, so users see time passing
   // instead of a frozen screen during long agent turns (some run 2-3+ min).
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const turnStartedAtRef = useRef(0);
   // ID of the live "streaming" assistant row that deltas update in place.
   // null when no streaming row has been created yet for the current turn.
   const streamingRowIdRef = useRef<string | null>(null);
@@ -255,6 +264,11 @@ export default function Builder() {
     setPendingImage(null);
     setBusy(true);
     setElapsed(0);
+    setClock(Date.now());
+    setProgress(null);
+    setLastCompletedAction(null);
+    setLastProgressAt(null);
+    setLastSignalAt(null);
     setRetryAvailable(null);
     setHint("Initiating your request…");
     const userRowId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -263,7 +277,12 @@ export default function Builder() {
     // Start an elapsed-seconds counter so the user sees time passing
     // instead of a static line during long agent turns.
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
-    elapsedTimerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    turnStartedAtRef.current = Date.now();
+    elapsedTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      setElapsed(Math.floor((now - turnStartedAtRef.current) / 1000));
+    }, 1000);
     // Reset the streaming row tracker for this turn.
     streamingRowIdRef.current = null;
 
@@ -275,9 +294,29 @@ export default function Builder() {
       await streamAgent(
         { genesisProjectId: projectId, conversationId: conversationId ?? undefined, message: text, model, compressHistory, image: imageToSend },
         {
-          onStatus: (t) => setHint(t),
+          onStatus: (t) => {
+            setHint(t);
+            if (!t.startsWith("Connection interrupted")) {
+              setLastProgressAt(Date.now());
+              setLastSignalAt(Date.now());
+            }
+          },
+          onProgress: (event) => {
+            const now = Date.now();
+            setProgress(event);
+            setHint(event.label);
+            setLastProgressAt(now);
+            setLastSignalAt(now);
+            if (event.phase === "tool_result") {
+              setLastCompletedAction(event.label);
+              setGates((current) => current.map((gate) => gate.resolved === "approved" && event.toolCallId && gate.gateId.startsWith(`${event.toolCallId}:`) ? { ...gate, finished: true } : gate));
+            }
+          },
+          onHeartbeat: () => setLastSignalAt(Date.now()),
           onNarration: (t) => addRow("narration", t),
           onDelta: (t) => {
+            setLastProgressAt(Date.now());
+            setLastSignalAt(Date.now());
             // Stream partial content into a live assistant bubble. On the first
             // delta of a turn, create the row; on subsequent deltas, replace
             // its text with the accumulated content from the server. This gives
@@ -297,8 +336,14 @@ export default function Builder() {
             sessionCostRef.current = runningSessionCost;
             setCost(runningSessionCost);
           },
-          onToolApprovalRequest: (gateId, tool, args) =>
-            setGates((g) => [...g, { gateId, tool, args }]),
+          onToolApprovalRequest: (gateId, tool, args) => {
+            setLastProgressAt(Date.now());
+            setGates((g) => [...g, { gateId, tool, args }]);
+          },
+          onToolApprovalResolved: (gateId, approved) => {
+            setLastProgressAt(Date.now());
+            setGates((g) => g.map((gate) => gate.gateId === gateId ? { ...gate, resolved: approved ? "approved" : "denied", resolving: false } : gate));
+          },
           onKbAnswer: (q, a, sources) =>
             setKbEntries((k) => [...k, { id: `kb-${Date.now()}`, question: q, answer: a, sources }]),
           onFinalAnswer: (t) => {
@@ -314,7 +359,10 @@ export default function Builder() {
           },
           onError: (m) => addRow("error", m),
           onTimeoutRetryAvailable: (cid) => setRetryAvailable(cid),
-          onDone: () => setHint("Enter to send · Shift+Enter for newline"),
+          onDone: () => {
+            setHint("Enter to send · Shift+Enter for newline");
+            setGates((current) => current.map((gate) => gate.resolved === "approved" ? { ...gate, ended: true } : gate));
+          },
         },
         ctrl.signal
       );
@@ -331,6 +379,7 @@ export default function Builder() {
       }
     } finally {
       setBusy(false);
+      setGates((current) => current.map((gate) => gate.resolved === "approved" ? { ...gate, ended: true } : gate));
       abortRef.current = null;
       setHint("Enter to send · Shift+Enter for newline");
       if (elapsedTimerRef.current) {
@@ -368,8 +417,14 @@ export default function Builder() {
 
   // ── Approve / deny a gate ─────────────────────────────────────────────────
   async function resolveGate(gateId: string, approved: boolean) {
-    setGates((g) => g.map((x) => (x.gateId === gateId ? { ...x, resolved: approved ? "approved" : "denied" } : x)));
-    try { await agentApi.approveGate(gateId, approved); } catch { /* non-fatal */ }
+    setGates((g) => g.map((x) => x.gateId === gateId ? { ...x, resolving: true } : x));
+    try {
+      await agentApi.approveGate(gateId, approved);
+      setGates((g) => g.map((x) => x.gateId === gateId ? { ...x, resolved: approved ? "approved" : "denied", resolving: false } : x));
+    } catch {
+      setGates((g) => g.map((x) => x.gateId === gateId ? { ...x, resolving: false } : x));
+      addRow("error", "The approval could not be confirmed. Check the current step before trying again.");
+    }
   }
 
   async function dismissGate(gate: Gate) {
@@ -441,6 +496,20 @@ export default function Builder() {
   const genesisBuilderUrl = currentProject?.genesisProjectId
     ? `https://genesis.estage.com/${currentProject.genesisProjectId}`
     : "https://genesis.estage.com/";
+
+  const secondsSinceStep = lastProgressAt ? Math.max(0, Math.floor((clock - lastProgressAt) / 1000)) : elapsed;
+  const secondsSinceSignal = lastSignalAt ? Math.max(0, Math.floor((clock - lastSignalAt) / 1000)) : elapsed;
+  const awaitingApproval = gates.some((gate) => !gate.resolved);
+  const connectionQuiet = secondsSinceSignal >= 35;
+  const progressQuiet = secondsSinceStep >= 45;
+  const currentWork = awaitingApproval ? "Waiting for your approval…" : hint;
+  const connectionDetail = connectionQuiet
+    ? `No server signal for ${secondsSinceSignal}s. Connection status is uncertain; you can wait or press Stop.`
+    : progressQuiet
+      ? `Connected to GenWhisperer. No new step for ${secondsSinceStep}s; waiting for a response.`
+      : lastSignalAt
+        ? `Connected to GenWhisperer · Last update ${secondsSinceStep}s ago`
+        : "Connecting to GenWhisperer…";
 
   return (
     <div className="app-wrap">
@@ -674,11 +743,15 @@ export default function Builder() {
                   ))}
                   {busy && (
                     <div className="thinking" aria-live="polite">
-                      <span className="dots" />
-                      <span className="dots" />
-                      <span className="dots" />
-                      <span className="t-text">{hint}</span>
-                      <span className="t-elapsed">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span>
+                      <div className="thinking-main">
+                        <span className="dots" />
+                        <span className="dots" />
+                        <span className="dots" />
+                        <span className="t-text">{progress ? `Step ${progress.step} of up to ${progress.maxSteps} · ` : ""}{currentWork}</span>
+                        <span className="t-elapsed">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span>
+                      </div>
+                      <div className={`thinking-detail ${connectionQuiet ? "quiet" : ""}`}>{connectionDetail}</div>
+                      {lastCompletedAction && <div className="thinking-detail">Last step finished: {lastCompletedAction}</div>}
                     </div>
                   )}
                   {gates.map((g) => (
@@ -690,15 +763,15 @@ export default function Builder() {
                       </div>
                       <div className="g-msg">
                         {g.resolved
-                          ? g.resolved === "approved" ? "Approved — running." : "Denied — skipped."
-                          : "This is a high-impact Genesis operation. Approve before it runs:"}
+                          ? g.resolved === "approved" ? g.finished ? "Approved — step finished." : g.ended ? "Approved — turn ended; check the result." : "Approved — running." : "Denied — skipped."
+                          : g.resolving ? "Sending your response…" : "This is a high-impact Genesis operation. Approve before it runs:"}
                       </div>
                       {!g.resolved && (
                         <>
                           <div className="g-args">{JSON.stringify(g.args, null, 2)}</div>
                           <div className="g-actions">
-                            <button className="btn btn-approve" onClick={() => resolveGate(g.gateId, true)}>Approve</button>
-                            <button className="btn btn-deny" onClick={() => resolveGate(g.gateId, false)}>Deny</button>
+                            <button className="btn btn-approve" disabled={g.resolving} onClick={() => resolveGate(g.gateId, true)}>Approve</button>
+                            <button className="btn btn-deny" disabled={g.resolving} onClick={() => resolveGate(g.gateId, false)}>Deny</button>
                           </div>
                         </>
                       )}

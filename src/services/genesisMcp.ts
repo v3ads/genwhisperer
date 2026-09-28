@@ -84,6 +84,7 @@ export class GenesisMcpClient {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch {
       /* no-op */
@@ -142,47 +143,46 @@ export class GenesisMcpClient {
   private async post(body: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    let r: Response;
     try {
-      r = await fetch(this.mcpUrl, {
+      const r = await fetch(this.mcpUrl, {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
+      if (r.status === 401) {
+        let msg = "Invalid agent token";
+        try {
+          const j = (await r.json()) as { error?: { message?: string } };
+          msg = j.error?.message || msg;
+        } catch {
+          /* keep default */
+        }
+        const e = new Error(
+          `Genesis auth failed (401): ${msg}. The token may be wrong, revoked, or already ` +
+            `consumed (Estage tokens are one-time-use). Generate a fresh one in Genesis > ` +
+            `Integrations > Claude Code.`
+        ) as Error & { code: number };
+        e.code = 401;
+        throw e;
+      }
+      if (r.status >= 400) {
+        const t = await r.text().catch(() => "");
+        throw new Error(`Genesis HTTP ${r.status}: ${t.slice(0, 300)}`);
+      }
+
+      const txt = await r.text();
+      return parseMcpBody(txt);
     } catch (e) {
       const err = e as Error;
-      if (err.name === "AbortError") {
+      if (ctrl.signal.aborted || err.name === "AbortError") {
         throw new Error(`Genesis request timed out (${timeoutMs / 1000}s).`);
       }
-      throw new Error(`Genesis unreachable: ${err.message}`);
+      if (err instanceof TypeError) throw new Error(`Genesis unreachable: ${err.message}`);
+      throw err;
     } finally {
       clearTimeout(timer);
     }
-
-    if (r.status === 401) {
-      let msg = "Invalid agent token";
-      try {
-        const j = (await r.json()) as { error?: { message?: string } };
-        msg = j.error?.message || msg;
-      } catch {
-        /* keep default */
-      }
-      const e = new Error(
-        `Genesis auth failed (401): ${msg}. The token may be wrong, revoked, or already ` +
-          `consumed (Estage tokens are one-time-use). Generate a fresh one in Genesis > ` +
-          `Integrations > Claude Code.`
-      ) as Error & { code: number };
-      e.code = 401;
-      throw e;
-    }
-    if (r.status >= 400) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`Genesis HTTP ${r.status}: ${t.slice(0, 300)}`);
-    }
-
-    const txt = await r.text();
-    return parseMcpBody(txt);
   }
 }
 
