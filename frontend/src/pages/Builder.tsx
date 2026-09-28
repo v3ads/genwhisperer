@@ -40,6 +40,7 @@ interface KbEntry {
 }
 
 const DEFAULT_MODEL = "z-ai/glm-5.2";
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 function historyUserText(content: string): string {
   if (!content.includes("<business_blueprint_json>")) return content;
@@ -84,7 +85,9 @@ export default function Builder() {
   // Pending image attachment (base64 data URL) for the next message.
   // Set when the user picks an image via the + button; cleared on send.
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const imageReadIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const sessionCostRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -219,6 +222,24 @@ export default function Builder() {
 
   const dismissRow = (id: string) => setRows((r) => r.filter((row) => row.id !== id));
 
+  function attachImage(file: File) {
+    const readId = ++imageReadIdRef.current;
+    setPendingImage(null);
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError("That image is too large. Choose an image up to 4 MB and try again.");
+      return;
+    }
+    setImageError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (imageReadIdRef.current === readId) setPendingImage(reader.result as string);
+    };
+    reader.onerror = () => {
+      if (imageReadIdRef.current === readId) setImageError("Could not read that image. Try a different one.");
+    };
+    reader.readAsDataURL(file);
+  }
+
   // ── Send a message ────────────────────────────────────────────────────────
   // compressHistory: when true (the "Retry with shorter history" button), the
   // server trims replayed history before sending to the model.
@@ -236,7 +257,8 @@ export default function Builder() {
     setElapsed(0);
     setRetryAvailable(null);
     setHint("Initiating your request…");
-    addRow("user", displayOverride || text || "📎 Shared an image");
+    const userRowId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setRows((r) => [...r, { id: userRowId, kind: "user", text: displayOverride || text || "📎 Shared an image" }]);
 
     // Start an elapsed-seconds counter so the user sees time passing
     // instead of a static line during long agent turns.
@@ -298,7 +320,14 @@ export default function Builder() {
       );
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
-        addRow("error", e instanceof ApiError ? e.message : (e as Error).message);
+        const message = e instanceof ApiError ? e.message : (e as Error).message;
+        if (message.startsWith("Request is too large.")) {
+          setRows((r) => r.filter((row) => row.id !== userRowId));
+          setInput((current) => current || text);
+          setImageError("That image is too large. Choose an image up to 4 MB and try again.");
+        } else {
+          addRow("error", message);
+        }
       }
     } finally {
       setBusy(false);
@@ -694,6 +723,14 @@ export default function Builder() {
                       <button className="img-remove" type="button" onClick={() => setPendingImage(null)} aria-label="Remove image" title="Remove image">×</button>
                     </div>
                   )}
+                  {imageError && (
+                    <div className="img-error" role="alert">
+                      <span>{imageError}</span>
+                      {modelSupportsImages && !busy && (
+                        <button type="button" onClick={() => imageInputRef.current?.click()}>Choose a smaller image</button>
+                      )}
+                    </div>
+                  )}
                   <div className="b-composer-row">
                     {modelSupportsImages && !busy && (
                       <>
@@ -711,15 +748,8 @@ export default function Builder() {
                           style={{ display: "none" }}
                           onChange={(e) => {
                             const file = e.target.files?.[0];
-                            if (!file) return;
-                            if (file.size > 4 * 1024 * 1024) {
-                              alert("Image must be under 4MB.");
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => setPendingImage(reader.result as string);
-                            reader.readAsDataURL(file);
-                            // Reset so the same file can be picked again
+                            if (file) attachImage(file);
+                            // Reset even on rejection so another image can be selected.
                             e.target.value = "";
                           }}
                         />
@@ -740,14 +770,7 @@ export default function Builder() {
                           if (item.type.startsWith("image/")) {
                             const file = item.getAsFile();
                             if (!file) return;
-                            if (file.size > 4 * 1024 * 1024) {
-                              alert("Image must be under 4MB.");
-                              e.preventDefault();
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => setPendingImage(reader.result as string);
-                            reader.readAsDataURL(file);
+                            attachImage(file);
                             // Prevent the image filename/placeholder text
                             // from being pasted into the textarea.
                             e.preventDefault();
