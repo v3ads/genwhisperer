@@ -19,6 +19,8 @@ import githubRouter from "./routes/github.js";
 import { csrfOriginGuard } from "./middleware/csrf.js";
 import { startCleanupJobs } from "./services/cleanup.js";
 import { runMigrations } from "./db/runMigrations.js";
+import { reportStreamError, supportOnServerError } from "./middleware/serverErrors.js";
+import { SUPPORT_MESSAGE } from "./services/errorReporting.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app: ReturnType<typeof express> = express();
@@ -103,6 +105,7 @@ app.use(
 // change. If a future route needs nested form bodies, validate input to reject
 // `__proto__`/`constructor` keys rather than re-enabling `qs`.
 app.use(express.urlencoded({ extended: false }));
+app.use(supportOnServerError);
 
 // Apply gzip compression to everything EXCEPT the SSE agent endpoint.
 // The SSE route must not be compressed — compression buffers chunks which
@@ -213,13 +216,24 @@ app.get("*", (req, res, next) => {
 });
 
 // ─── Error handler ────────────────────────────────────────────────────────────
-app.use((err: Error & { type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error & { type?: string }, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("[Server Error]", err.message);
+  if (res.headersSent) {
+    reportStreamError(req, res, err);
+    if (res.getHeader("Content-Type") === "text/event-stream" && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ type: "error", message: SUPPORT_MESSAGE })}\n\n`);
+      res.end();
+    } else {
+      next(err);
+    }
+    return;
+  }
   if (err.type === "entity.too.large") {
     res.status(413).json({ error: "Request is too large. Images must be under 4 MB." });
     return;
   }
-  res.status(500).json({ error: "Internal server error" });
+  res.locals.failureError = err;
+  res.status(500).json({ error: SUPPORT_MESSAGE });
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────

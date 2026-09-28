@@ -1,4 +1,5 @@
 // ---------------------------------------------------------------------------
+import { SUPPORT_MESSAGE } from "./supportMessage";
 // GenWhisperer V2 API client
 // Wraps every V2 endpoint. Same-origin: all paths are relative "/api/...".
 // credentials:"include" on every call so the httpOnly gw_session cookie is
@@ -160,7 +161,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message, payload);
+    throw new ApiError(res.status, res.status >= 500 ? SUPPORT_MESSAGE : message, payload);
   }
 
   if (res.status === 204) return undefined as T;

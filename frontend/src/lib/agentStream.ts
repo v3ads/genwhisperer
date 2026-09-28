@@ -10,6 +10,7 @@
  * starts. This safely absorbs transient edge/proxy failures without replaying
  * a request after the server could have begun an agent action.
  */
+import { SUPPORT_MESSAGE } from "./supportMessage";
 
 /** Mirrors src/services/agentLoop.ts AgentEvent (the wire shape). */
 export type AgentEvent =
@@ -100,7 +101,8 @@ export async function streamAgent(
         signal,
       });
     } catch (error) {
-      if (signal?.aborted || attempt === STREAM_START_MAX_ATTEMPTS - 1) throw error;
+      if (signal?.aborted) throw error;
+      if (attempt === STREAM_START_MAX_ATTEMPTS - 1) throw new Error(SUPPORT_MESSAGE);
       handlers.onStatus?.("Connection interrupted. Reconnecting…");
       await waitForRetry(retryDelay(attempt), signal);
       continue;
@@ -120,7 +122,7 @@ export async function streamAgent(
         await waitForRetry(retryDelay(attempt), signal);
         continue;
       }
-      throw new Error(message);
+      throw new Error(res.status >= 500 ? SUPPORT_MESSAGE : message);
     }
 
     // From this point the server has accepted the request and may perform work.
@@ -173,7 +175,7 @@ function dispatch(ev: AgentEvent, h: AgentStreamHandlers): void {
     case "final_answer": h.onFinalAnswer?.(ev.text); break;
     case "cost": h.onCost?.(ev.totalUsd); break;
     case "conversation": h.onConversation?.(ev.id); break;
-    case "error": h.onError?.(ev.message); break;
+    case "error": h.onError?.(/internal server error/i.test(ev.message) ? SUPPORT_MESSAGE : ev.message); break;
     case "timeout_retry_available": h.onTimeoutRetryAvailable?.(ev.conversationId); break;
     case "done": h.onDone?.(); break;
   }
