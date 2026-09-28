@@ -13,6 +13,7 @@ export interface AuthRequest extends Request {
 }
 
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
   const token = req.cookies?.gw_session;
   if (!token) {
     res.status(401).json({ error: "Unauthorized" });
@@ -51,6 +52,9 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
 
   req.user = { id: user.id, email: user.email, role: user.role, suspended: user.suspended };
   next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {

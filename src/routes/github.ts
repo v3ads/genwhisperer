@@ -44,6 +44,7 @@ import {
 } from "../services/importRunner.js";
 import { GenesisMcpClient } from "../services/genesisMcp.js";
 import { DEFAULT_V2_MODEL } from "../config/systemPrompt.js";
+import { reportUnexpectedError, SUPPORT_MESSAGE } from "../services/errorReporting.js";
 import { z } from "zod";
 
 const router: ReturnType<typeof Router> = Router();
@@ -370,7 +371,8 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
       tree = await getFileTree(githubToken, repoOwner, repoName, branch);
     } catch (e) {
-      emit({ type: "error", message: (e as Error).message });
+      void reportUnexpectedError({ error: e, method: req.method, path: req.originalUrl.split("?")[0], projectId: genesisProjectId, projectName: projRows[0].name, userId, requestId });
+      emit({ type: "error", message: SUPPORT_MESSAGE });
       return;
     }
 
@@ -417,7 +419,8 @@ router.post("/import", requireAuth, async (req: AuthRequest, res: Response) => {
       emit({ type: "plan", plan });
     }
   } catch (e) {
-    emit({ type: "error", message: (e as Error).message });
+    void reportUnexpectedError({ error: e, method: req.method, path: req.originalUrl.split("?")[0], projectId: genesisProjectId, projectName: projRows[0].name, userId, requestId });
+    emit({ type: "error", message: SUPPORT_MESSAGE });
   } finally {
     clearInterval(heartbeat);
     if (!closed) {
@@ -584,7 +587,8 @@ router.post("/execute", requireAuth, async (req: AuthRequest, res: Response) => 
   try {
     await runImport(runnerInput, sink);
   } catch (e) {
-    emit({ type: "error", message: (e as Error).message });
+    void reportUnexpectedError({ error: e, method: req.method, path: req.originalUrl.split("?")[0], projectId: genesisProjectId, projectName: project.name, userId, requestId });
+    emit({ type: "error", message: SUPPORT_MESSAGE });
   } finally {
     clearInterval(heartbeat);
     if (!closed) {

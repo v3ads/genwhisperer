@@ -37,6 +37,7 @@ import { genesisToolsToOrTools, needsConfirmation } from "../config/genesisTools
 import { buildSystemPrompt } from "../config/systemPrompt.js";
 import { logAgentLaunch } from "../utils/launchObservability.js";
 import { guardAgentToolCall } from "../utils/agentToolGuard.js";
+import { SUPPORT_MESSAGE } from "./errorReporting.js";
 import {
   appendMessage,
   createConversation,
@@ -166,6 +167,7 @@ export interface AgentRunResult {
   toolCalls: number;
   stopped: boolean;
   error: string | null;
+  unexpectedError: Error | null;
 }
 
 /**
@@ -183,6 +185,7 @@ export async function runAgentLoop(
   const toolCallAttempts = new Map<string, number>();
   let stopped = false;
   let errorMessage: string | null = null;
+  let unexpectedError: Error | null = null;
   let finalAnswer = "";
   let conversationId = input.conversationId;
 
@@ -609,9 +612,17 @@ export async function runAgentLoop(
       safeEmit({ type: "narration", text: errorMessage });
     }
   } catch (e) {
-    errorMessage = (e as Error).message;
-    logAgentLaunch({ ...launchBase, event: "agent_failed", durationMs: Date.now() - runStartedAt, iterationCount: iterations, toolCount: toolCallCount, errorName: (e as Error).name, errorMessage });
-    safeEmit({ type: "error", message: errorMessage });
+    const error = e instanceof Error ? e : new Error(String(e));
+    errorMessage = error.message;
+    logAgentLaunch({ ...launchBase, event: "agent_failed", durationMs: Date.now() - runStartedAt, iterationCount: iterations, toolCount: toolCallCount, errorName: error.name, errorMessage });
+    // A consumed Genesis token has a specific action the user can take.
+    // Unexpected failures stay in the logs and owner email, not the UI.
+    if (errorMessage.startsWith("Genesis token invalid or already consumed")) {
+      safeEmit({ type: "error", message: errorMessage });
+    } else {
+      unexpectedError = error;
+      safeEmit({ type: "error", message: SUPPORT_MESSAGE });
+    }
   } finally {
     // Cancel any unresolved approval gates so they don't leak.
     cancelGatesFor(gateIds);
@@ -630,6 +641,7 @@ export async function runAgentLoop(
     toolCalls: toolCallCount,
     stopped,
     error: errorMessage,
+    unexpectedError,
   };
 }
 

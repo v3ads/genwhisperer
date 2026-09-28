@@ -9,6 +9,7 @@
  * line split). Phase 3 emits up through `plan` (Stage A); Stage B execution
  * events will be added in Phase 4.
  */
+import { SUPPORT_MESSAGE } from "./supportMessage";
 
 /** The server-side import event shape (mirrors routes/github.ts).
  *  Phase 4 adds: tool_approval_request/resolved, progress, summary. */
@@ -87,7 +88,8 @@ export async function streamImport(
         signal,
       });
     } catch (error) {
-      if (signal?.aborted || attempt === STREAM_START_MAX_ATTEMPTS - 1) throw error;
+      if (signal?.aborted) throw error;
+      if (attempt === STREAM_START_MAX_ATTEMPTS - 1) throw new Error(SUPPORT_MESSAGE);
       handlers.onStatus?.("Connection interrupted. Reconnecting…");
       await waitForRetry(retryDelay(attempt), signal);
       continue;
@@ -107,7 +109,7 @@ export async function streamImport(
         await waitForRetry(retryDelay(attempt), signal);
         continue;
       }
-      throw new Error(message);
+      throw new Error(res.status >= 500 ? SUPPORT_MESSAGE : message);
     }
 
     // From this point the server has accepted the request and may perform work.
@@ -157,7 +159,7 @@ function dispatch(ev: ImportEvent, h: ImportStreamHandlers): void {
     case "progress": h.onProgress?.(ev.done, ev.total, ev.label); break;
     case "summary": h.onSummary?.(ev.succeeded, ev.skipped, ev.failed); break;
     case "cost": h.onCost?.(ev.totalUsd); break;
-    case "error": h.onError?.(ev.message); break;
+    case "error": h.onError?.(/internal server error/i.test(ev.message) ? SUPPORT_MESSAGE : ev.message); break;
     case "done": h.onDone?.(); break;
   }
 }
@@ -190,7 +192,8 @@ export async function streamExecute(
         signal,
       });
     } catch (error) {
-      if (signal?.aborted || attempt === STREAM_START_MAX_ATTEMPTS - 1) throw error;
+      if (signal?.aborted) throw error;
+      if (attempt === STREAM_START_MAX_ATTEMPTS - 1) throw new Error(SUPPORT_MESSAGE);
       handlers.onStatus?.("Connection interrupted. Reconnecting…");
       await waitForRetry(retryDelay(attempt), signal);
       continue;
@@ -210,7 +213,7 @@ export async function streamExecute(
         await waitForRetry(retryDelay(attempt), signal);
         continue;
       }
-      throw new Error(message);
+      throw new Error(res.status >= 500 ? SUPPORT_MESSAGE : message);
     }
 
     await consumeStream(res, handlers);

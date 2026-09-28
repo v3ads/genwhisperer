@@ -41,6 +41,7 @@ import {
 import { logSessionToAITable, type ChatMessage as AitableChatMessage } from "../services/aitable.js";
 import { z } from "zod";
 import { logAgentLaunch } from "../utils/launchObservability.js";
+import { reportUnexpectedError, SUPPORT_MESSAGE } from "../services/errorReporting.js";
 import {
   BlueprintError,
   blueprintAgentMessage,
@@ -73,7 +74,8 @@ router.post("/blueprints/interpret", requireAuth, (req: AuthRequest, res: Respon
 
 // ─── POST /api/agent/message ───────────────────────────────────────────────────
 // Start (or resume) an agent turn. Streams SSE events from the agent loop.
-router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => {
+router.post("/message", requireAuth, async (req: AuthRequest, res: Response, next) => {
+  try {
   const requestId = randomUUID();
   const startedAt = Date.now();
   res.setHeader("X-Agent-Request-Id", requestId);
@@ -144,7 +146,8 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     openrouterKey = process.env.OPENROUTER_PLATFORM_KEY ?? "";
     if (!openrouterKey) {
       logAgentLaunch({ requestId, event: "request_rejected", userId, projectId: genesisProjectId, httpStatus: 500, errorName: "MissingPlatformKey" });
-      res.status(500).json({ error: "Trial key not configured. Please contact support." });
+      res.locals.failureError = new Error("Trial key not configured");
+      res.status(500).json({ error: SUPPORT_MESSAGE });
       return;
     }
     chosenModel = model || DEFAULT_V2_MODEL;
@@ -264,6 +267,17 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
     toolCount: result.toolCalls,
     errorMessage: result.error ?? undefined,
   });
+  if (result.unexpectedError) {
+    void reportUnexpectedError({
+      error: result.unexpectedError,
+      method: req.method,
+      path: req.originalUrl.split("?")[0],
+      projectId: genesisProjectId,
+      projectName: project.name,
+      userId,
+      requestId,
+    });
+  }
 
   // ── Close-out: increment the trial turn counter (trial users only) ────────
   if (tierState.usePlatformKey) {
@@ -289,6 +303,9 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response) => 
 
   clearInterval(heartbeat);
   res.end();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ─── POST /api/agent/approve/:gateId ───────────────────────────────────────────
