@@ -205,9 +205,8 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response, nex
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
-  // Send a first SSE comment immediately, then periodic comment heartbeats.
-  // Comments are ignored by the browser event parser but prevent proxies from
-  // treating a long-running Genesis operation as an idle response.
+  // Send a first SSE comment immediately. Periodic heartbeat events let the
+  // browser distinguish a live connection from actual completed work.
   res.write(": connected\n\n");
   (res as Response & { flush?: () => void }).flush?.();
   logAgentLaunch({ requestId, event: "stream_started", userId, projectId: genesisProjectId, conversationId, model: chosenModel, durationMs: Date.now() - startedAt });
@@ -226,7 +225,7 @@ router.post("/message", requireAuth, async (req: AuthRequest, res: Response, nex
   };
   const heartbeat = setInterval(() => {
     if (!closed && !res.writableEnded) {
-      res.write(": keepalive\n\n");
+      res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
       (res as Response & { flush?: () => void }).flush?.();
     }
   }, 15_000);

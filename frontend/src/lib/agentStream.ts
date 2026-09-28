@@ -15,6 +15,8 @@ import { SUPPORT_MESSAGE } from "./supportMessage";
 /** Mirrors src/services/agentLoop.ts AgentEvent (the wire shape). */
 export type AgentEvent =
   | { type: "status"; text: string }
+  | { type: "progress"; step: number; maxSteps: number; phase: "model" | "tool" | "tool_result"; label: string; toolCallId?: string }
+  | { type: "heartbeat" }
   | { type: "narration"; text: string }
   | { type: "delta"; text: string }
   | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
@@ -30,6 +32,8 @@ export type AgentEvent =
 /** Callbacks the Builder registers. Each is optional; unset ones are ignored. */
 export interface AgentStreamHandlers {
   onStatus?: (text: string) => void;
+  onProgress?: (progress: Extract<AgentEvent, { type: "progress" }>) => void;
+  onHeartbeat?: () => void;
   onNarration?: (text: string) => void;
   onDelta?: (text: string) => void;
   onToolApprovalRequest?: (gateId: string, tool: string, args: Record<string, unknown>) => void;
@@ -167,6 +171,8 @@ async function consumeStream(res: Response, handlers: AgentStreamHandlers): Prom
 function dispatch(ev: AgentEvent, h: AgentStreamHandlers): void {
   switch (ev.type) {
     case "status": h.onStatus?.(ev.text); break;
+    case "progress": h.onProgress?.(ev); break;
+    case "heartbeat": h.onHeartbeat?.(); break;
     case "narration": h.onNarration?.(ev.text); break;
     case "delta": h.onDelta?.(ev.text); break;
     case "tool_approval_request": h.onToolApprovalRequest?.(ev.gateId, ev.tool, ev.args); break;

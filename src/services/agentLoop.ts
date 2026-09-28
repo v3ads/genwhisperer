@@ -62,6 +62,11 @@ function friendlyToolStatus(toolName: string): string {
   const normalized = toolName.toLowerCase();
   if (normalized === "genesis_context") return "Reviewing your Genesis project…";
   if (normalized === "genesis_read_files") return "Reading your project files…";
+  if (normalized === "genesis_generate_image") return "Generating an image…";
+  if (normalized === "genesis_provision_element") return "Adding an element to your project…";
+  if (normalized === "genesis_edit_file") return "Editing a project file…";
+  if (normalized === "genesis_write_file") return "Writing a project file…";
+  if (normalized === "genesis_preview_logs") return "Checking the project preview…";
   if (normalized === "genesis_cloud_status") return "Checking your Genesis project status…";
   if (normalized === "genesis_cloud_migrate") return "Genesis is migrating your project. This can take a minute…";
   if (normalized.includes("read") || normalized.includes("list") || normalized.includes("get") || normalized.includes("search")) {
@@ -76,6 +81,8 @@ function friendlyToolStatus(toolName: string): string {
 /** SSE event the loop emits to the browser. */
 export type AgentEvent =
   | { type: "status"; text: string }
+  | { type: "progress"; step: number; maxSteps: number; phase: "model" | "tool" | "tool_result"; label: string; toolCallId?: string }
+  | { type: "heartbeat" }
   | { type: "narration"; text: string }
   | { type: "delta"; text: string }
   | { type: "tool_approval_request"; gateId: string; tool: string; args: Record<string, unknown> }
@@ -376,6 +383,7 @@ export async function runAgentLoop(
         ? `${friendlyModelName(input.model)} is reviewing your request…`
         : `${friendlyModelName(input.model)} is reviewing the project and preparing the next step…`;
       safeEmit({ type: "status", text: modelProgress });
+      safeEmit({ type: "progress", step: iterations, maxSteps: MAX_ITERATIONS, phase: "model", label: modelProgress });
 
       let resp;
       try {
@@ -533,33 +541,19 @@ export async function runAgentLoop(
           }
 
           toolCallCount += 1;
-          safeEmit({ type: "status", text: friendlyToolStatus(fn.name) });
+          const toolStatus = friendlyToolStatus(fn.name);
+          safeEmit({ type: "status", text: toolStatus });
+          safeEmit({ type: "progress", step: iterations, maxSteps: MAX_ITERATIONS, phase: "tool", label: toolStatus });
           logAgentLaunch({ ...launchBase, event: "tool_started", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
-
-          // Heartbeat: some Genesis/eStage tool calls run 15-50s (genesis_read_files,
-          // estage_kb_query, genesis_connectors). Without a periodic status event the
-          // frontend's "working" line goes static for that whole window and reads as
-          // frozen. Emit a friendly "still working" status every 15s while the tool
-          // call is in flight so the user sees continued activity.
-          const heartbeatText = `${friendlyToolStatus(fn.name).replace(/…$/, "")} — still working, this can take a bit…`;
-          const heartbeat = setInterval(() => {
-            if (sink.closed()) return;
-            safeEmit({ type: "status", text: heartbeatText });
-          }, 15_000);
-
-          let resultText: string;
-          try {
-            resultText = await executeToolCall(
-              fn.name,
-              args,
-              tc.id,
-              mcp,
-              sink,
-              gateIds
-            );
-          } finally {
-            clearInterval(heartbeat);
-          }
+          const resultText = await executeToolCall(
+            fn.name,
+            args,
+            tc.id,
+            mcp,
+            sink,
+            gateIds
+          );
+          safeEmit({ type: "progress", step: iterations, maxSteps: MAX_ITERATIONS, phase: "tool_result", label: toolStatus.replace(/…$/, ""), toolCallId: tc.id });
           logAgentLaunch({ ...launchBase, event: "tool_succeeded", toolName: fn.name, toolCount: toolCallCount, durationMs: Date.now() - runStartedAt });
 
           // Feed the result back to the model as a tool message.
@@ -608,7 +602,7 @@ export async function runAgentLoop(
 
     if (iterations > MAX_ITERATIONS && !stopped && !finalAnswer) {
       errorMessage =
-        "Reached the max tool-call iteration limit. Ask me to continue or narrow the task.";
+        `I paused after ${MAX_ITERATIONS} steps to avoid repeating work. Review the changes, then ask me to continue with the next part.`;
       safeEmit({ type: "narration", text: errorMessage });
     }
   } catch (e) {
