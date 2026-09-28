@@ -84,7 +84,8 @@ app.use(cookieParser());
 // webhook route (signature verification needs the exact raw bytes).
 app.use(
   express.json({
-    limit: "1mb",
+    // A 4 MiB Builder image becomes about 5.34 MiB when base64 encoded in JSON.
+    limit: "6mb",
     verify: (req, _res, buf) => {
       const url = req.url ?? "";
       if (url.startsWith("/api/billing/webhook")) {
@@ -212,8 +213,12 @@ app.get("*", (req, res, next) => {
 });
 
 // ─── Error handler ────────────────────────────────────────────────────────────
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error & { type?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("[Server Error]", err.message);
+  if (err.type === "entity.too.large") {
+    res.status(413).json({ error: "Request is too large. Images must be under 4 MB." });
+    return;
+  }
   res.status(500).json({ error: "Internal server error" });
 });
 
